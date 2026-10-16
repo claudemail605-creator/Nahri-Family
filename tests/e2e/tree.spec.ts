@@ -104,6 +104,12 @@ test('selecting a card opens the details sheet and relatives navigate', async ({
   await expect(details.locator('.p-name')).toHaveText('Bahadur Fixture');
   await expect(page.locator('.pcard:not([data-spouse])[data-person-id="person-b"]')).toHaveClass(/selected/);
   await expect(page.locator('.pcard:not([data-spouse])[data-person-id="person-b"]')).toHaveClass(/pulse/);
+
+  // Closing plays the exit animation and still tears the sheet down (the
+  // animated close is timer-driven, so this guards the finish path).
+  await details.locator('.p-close').click();
+  await expect(details).toBeHidden();
+  await expect(page.locator('#details .p-name')).toHaveCount(0);
 });
 
 test('search filters the tree; an impossible search shows the honest empty state', async ({ page }) => {
@@ -214,12 +220,37 @@ test('zoom buttons change the scale', async ({ page }) => {
   expect(await worldScale(page)).toBeCloseTo(before, 5);
 });
 
-test('double-clicking the canvas zooms in', async ({ page }) => {
+test('double-clicking the canvas zooms in (eased)', async ({ page }) => {
   await signInAs(page, 'admin@example.test');
   await waitForTree(page);
   const before = await worldScale(page);
   await page.locator('#tree-stage').dblclick({ position: { x: 200, y: 150 } });
-  expect(await worldScale(page)).toBeGreaterThan(before);
+  // The zoom is animated, so poll until the tween has passed the old scale.
+  await expect.poll(() => worldScale(page)).toBeGreaterThan(before);
+});
+
+test('motion: chrome animates, and reduced motion switches it off', async ({ page }) => {
+  await signInAs(page, 'admin@example.test');
+  await waitForTree(page);
+  /** First computed animation duration of the element, in ms. */
+  const animationMs = (selector: string): Promise<number> =>
+    page
+      .locator(selector)
+      .first()
+      .evaluate((el) => {
+        const raw = getComputedStyle(el).animationDuration.split(',')[0]!.trim();
+        const value = parseFloat(raw);
+        return raw.endsWith('ms') ? value : value * 1000;
+      });
+
+  // Entrance animations are actually defined (sheet slide, card settle-in)…
+  expect(await animationMs('.details')).toBeGreaterThan(100);
+  expect(await animationMs('.tree-node')).toBeGreaterThan(100);
+
+  // …and collapse to nothing under prefers-reduced-motion.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  expect(await animationMs('.details')).toBeLessThan(5);
+  expect(await animationMs('.tree-node')).toBeLessThan(5);
 });
 
 test('hovering a card shows the tooltip (desktop)', async ({ page }, testInfo) => {

@@ -115,8 +115,11 @@ deliberately a different identity:
   selected = copper ring + soft lift. Spouse pair joined by a slim bond
   capsule. **Connectors:** orthogonal elbows with rounded corners (new
   signature), 1.5 px, muted; hover of a card subtly emphasises its line.
-- **Motion:** 120–220 ms, ease-out, never blocking; `prefers-reduced-motion`
-  honoured everywhere. No animation on pan/zoom (transform only, GPU).
+- **Motion:** 120–260 ms, ease-out, never blocking; `prefers-reduced-motion`
+  honoured everywhere (CSS via `base.css`, JS tweens via `core/motion.ts`).
+  Pan, pinch and wheel stay instant (transform only, GPU); discrete changes —
+  fit, focus, double-click zoom — ease over ~300 ms and any direct input
+  cancels them mid-flight.
 - **Components:** one implementation per concept — `Button` (5 variants ×
   3 sizes), `Field`, `Select`, `Chip`, `Tag`, `Modal`, `Sheet`, `Drawer`,
   `Toast`, `Banner`, `EmptyState`, `ProgressRing`, `Pager`, `Tooltip`,
@@ -172,6 +175,7 @@ test:e2e` (all specs), re-run scanners (`tools/scan-*.cjs`), update
 | **1. Foundation** (done) | Vite+TS scaffold, tokens + base styles, shell (header/theme/language), i18n engine + dictionaries (extracted), theme, toasts/modals, test harness (vitest + playwright) | typecheck clean; 43 unit tests; build; 10 E2E tests (desktop+mobile); first push verified |
 | **2. Auth & access** (done) | Supabase client, auth gate flows (sign-in/forgot/set-password/inactive/profile), session store, permission helpers | typecheck clean; 94 unit tests (11 files); build; 34 E2E tests (desktop + mobile) against the mock Supabase; live authenticated checks await the owner's test account |
 | **3. Tree & profiles** (done) | model build, layout, renderer, PanZoomController, selection, tooltips, profile sheet, search, filters, focus | typecheck clean; 164 unit tests (17 files); build OK; 61 passed + 1 skipped (31 tests × desktop + mobile, ~33 s) against the mock Supabase; two real bugs found during the fix cycle and fixed (toggle misposition, canvas height on mobile); live authenticated checks await the owner's test account |
+| **3.5 Motion pass** (done) | staggered card settle-in, eased fit/focus/double-click zoom (cancellable), sheet slide-in/out, tooltip + view fades, hover easing; reduced motion honoured; hover tooltip no longer pops over the open sheet | typecheck clean; 171 unit tests (17 files); build OK; 63 passed + 1 skipped (32 tests × desktop + mobile) against the mock Supabase; visual capture reviewed |
 | **4. Editing & branch** | person form (add/edit/child/root), validation, duplicate warning, photos upload/remove/lightbox, deletion requests, soft delete/restore, history + restore version, branch workspace (guided completion, multi-branch) | E2E: add/edit person persists via mock, validation errors, photo flow, request→approve, restore version, branch workspace progress + save round-trip |
 | **5. Admin & tools** | table pagination, admin tabs (users/invite/requests/deleted/activity/branch progress/import/backup), Excel import+export, JSON backup, tools (related/upcoming/stats/print/PNG) | unit: kinship cases, upcoming filter, importer problems, isoDate cases; E2E: import preview problems, backup payload shape, tools outputs, permission-gated admin UI |
 | **6. Mobile, languages, a11y** | 360/390/768/1440 sweeps, bottom nav, sheets, RTL polish, keyboard focus management, reduced motion, i18n completeness for new keys | E2E at all 4 viewports × (en/ur ltr/rtl × light/dark) screenshots + overflow checks; keyboard-only pass |

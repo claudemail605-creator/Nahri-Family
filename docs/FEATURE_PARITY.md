@@ -151,7 +151,7 @@ test that exercised it.
 | M3 | Realtime updates (people channel) + 60 s poll fallback | `startLiveUpdates()` | planned |
 | M4 | Manual refresh keeping selection | `syncFromServer()` | planned |
 | M5 | Mobile filter drawer, 360 px usable | drawer | **done** (Phase 3 — the sidebar becomes a drawer under 980 px with a backdrop and a toolbar toggle; opened in E2E on the Pixel 7 project and reviewed as a screenshot; the 360 px worst case is swept in Phase 6) |
-| M6 | Accessibility: focus rings, keyboard, aria labels, reduced motion | partly present | **in progress** (Phases 1–3 — focus-visible rings, modal focus trap + restore, gate keyboard chain (E2E); tree cards are keyboard-reachable and Enter opens the sheet (E2E), toggles and zoom buttons carry labels, reduced-motion CSS is in place; per-view work continues) |
+| M6 | Accessibility: focus rings, keyboard, aria labels, reduced motion | partly present | **in progress** (Phases 1–3.5 — focus-visible rings, modal focus trap + restore, gate keyboard chain (E2E); tree cards are keyboard-reachable and Enter opens the sheet (E2E), toggles and zoom buttons carry labels, reduced-motion CSS is in place and the Phase 3.5 canvas tweens check the same preference in JS (`core/motion.ts`, unit-tested); per-view work continues) |
 | M7 | Toast + empty + loading + error states everywhere | yes | **in progress** (Phases 1–3 — toast host; gate loading/verifying/unavailable with a working retry; inline form messages; the tree has loading, an honest empty state, and a load-error banner with retry (E2E fault injection); view-level states continue in Phase 4) |
 
 ## Deliberately not carried over

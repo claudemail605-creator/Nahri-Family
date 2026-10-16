@@ -25,6 +25,8 @@ export interface TreeRenderOptions {
   collapsed: ReadonlySet<string>;
   layout: LayoutResult;
   selectedId: string | null;
+  /** Ids drawn by the previous render; nodes absent from it fade in. */
+  previousIds?: ReadonlySet<string>;
 }
 
 /** Localized label for the stored gender text. */
@@ -62,10 +64,12 @@ export function cardDates(p: Person): string {
   return [p.dob_display, p.dod_display].filter(Boolean).join(' – ');
 }
 
-export function renderTreeInto(world: HTMLElement, options: TreeRenderOptions): void {
+export function renderTreeInto(world: HTMLElement, options: TreeRenderOptions): Set<string> {
   const { i18n, model, layout, collapsed } = options;
   const { pos, width, height, minGen } = layout;
   const visibleKids = (id: string): Person[] => options.visibleKids.get(id) ?? [];
+  const rendered = new Set<string>();
+  let enterIndex = 0;
 
   const fragment = document.createDocumentFragment();
 
@@ -130,6 +134,11 @@ export function renderTreeInto(world: HTMLElement, options: TreeRenderOptions): 
     const gcls = genderClass(p);
 
     const node = h('div', { class: 'tree-node' });
+    if (options.previousIds && !options.previousIds.has(p.id)) {
+      // Newly revealed (or first-paint) node: fade in, gently staggered.
+      node.classList.add('node-in');
+      if (enterIndex < 24) node.style.setProperty('--enter-i', String(enterIndex++));
+    }
     node.style.left = `${PAD + v.x}px`;
     node.style.top = `${PAD + v.y}px`;
     node.style.width = `${v.w}px`;
@@ -209,8 +218,10 @@ export function renderTreeInto(world: HTMLElement, options: TreeRenderOptions): 
       node.append(tg);
     }
 
+    rendered.add(p.id);
     fragment.append(node);
   }
 
   world.replaceChildren(fragment);
+  return rendered;
 }

@@ -477,9 +477,19 @@
   opacity: 0.72;
 }
 
-.pcard:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-2);
+@media (hover: hover) {
+  .pcard {
+    transition:
+      border-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out),
+      transform var(--dur-fast) var(--ease-out);
+  }
+
+  .pcard:hover {
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-2);
+    transform: translateY(-1px);
+  }
 }
 
 .pcard.selected {
@@ -896,12 +906,115 @@
   }
 }
 
+/* ---- Motion -------------------------------------------------------------- */
+/*
+ * Entrance/exit easing for the workspace. Everything here is CSS-driven so the
+ * global `prefers-reduced-motion` override in base.css can switch it off; the
+ * canvas tweens live in panzoom.ts and check the same preference in JS.
+ */
+
+.chip,
+.tw-tab,
+.icon-btn,
+.rel__btn,
+.tg {
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+/* Newly revealed (or first-paint) cards settle in with a soft stagger; ids
+   that survived the previous paint are untouched, so filtering does not
+   flash the whole tree. */
+.tree-node.node-in {
+  animation: node-in 260ms var(--ease-out) both;
+  animation-delay: calc(min(var(--enter-i, 0), 20) * 20ms);
+}
+
+@keyframes node-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Hosts and the tooltip re-fade each time they are (re)shown. */
+.tree-stage,
+.tw-table {
+  animation: view-in var(--dur-base) var(--ease-out);
+}
+
+@keyframes view-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.tooltip {
+  animation: tip-in var(--dur-fast) var(--ease-out);
+}
+
+@keyframes tip-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+/* Details sheet: slides in from the edge; the class-pair handles the exit
+   (view.ts adds .details--out, then tears the sheet down on a timer). */
+.details {
+  animation: sheet-in 240ms var(--ease-out);
+}
+
+.details--out {
+  animation: sheet-out 180ms var(--ease-in-out) forwards;
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+@keyframes sheet-out {
+  to {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+@media (max-width: 980px) {
+  /* On small screens the sheet is a bottom sheet — it rises, not slides. */
+  @keyframes sheet-in {
+    from {
+      opacity: 0;
+      transform: translateY(22px);
+    }
+  }
+
+  @keyframes sheet-out {
+    to {
+      opacity: 0;
+      transform: translateY(22px);
+    }
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .tw-sidebar {
     transition: none;
   }
 
   .pcard.pulse {
+    animation: none;
+  }
+
+  /* No settle-in stagger (and no hidden-until-delay content) when the user
+     asks for reduced motion. */
+  .tree-node.node-in {
     animation: none;
   }
 }

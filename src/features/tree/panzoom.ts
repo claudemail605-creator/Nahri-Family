@@ -1,3 +1,4 @@
+import { easeOutCubic, prefersReducedMotion } from '../../core/motion';
 import { PAD } from './layout';
 
 /**
@@ -56,6 +57,16 @@ export function dragThreshold(pointerType: string): number {
   return pointerType === 'mouse' ? DRAG_THRESHOLD_MOUSE : DRAG_THRESHOLD_TOUCH;
 }
 
+/** Eased straight-line blend between two transforms (the animation step). */
+export function tweenTransform(from: Transform, to: Transform, progress: number): Transform {
+  const p = easeOutCubic(Math.min(1, Math.max(0, progress)));
+  return {
+    tx: from.tx + (to.tx - from.tx) * p,
+    ty: from.ty + (to.ty - from.ty) * p,
+    scale: from.scale + (to.scale - from.scale) * p,
+  };
+}
+
 /** Below threshold and inside the time window → the gesture is a tap. */
 export function isTapGesture(
   dx: number,
@@ -101,6 +112,14 @@ export interface PanZoomCallbacks {
   onTap?(card: HTMLElement): void;
 }
 
+export interface PanZoomOptions {
+  /** Injectable for tests; defaults to the real prefers-reduced-motion query. */
+  reducedMotion?: () => boolean;
+}
+
+/** Duration of an animated fit / focus / double-click zoom (ms). */
+export const ZOOM_ANIMATION_MS = 300;
+
 interface PointerPos {
   x: number;
   y: number;
@@ -131,11 +150,15 @@ export class PanZoomController {
   private drag: DragState | null = null;
   private pinch: PinchState | null = null;
   private disposed = false;
+  private animation: { from: Transform; to: Transform; startedAt: number; duration: number } | null =
+    null;
+  private rafId = 0;
 
   constructor(
     private readonly stage: HTMLElement,
     private readonly world: HTMLElement,
     private readonly callbacks: PanZoomCallbacks = {},
+    private readonly options: PanZoomOptions = {},
   ) {
     stage.addEventListener('pointerdown', this.onPointerDown);
     stage.addEventListener('pointermove', this.onPointerMove);
@@ -152,6 +175,7 @@ export class PanZoomController {
   }
 
   set(t: Transform): void {
+    this.cancelAnimation();
     this.t = { ...t };
     this.apply();
   }
@@ -160,9 +184,9 @@ export class PanZoomController {
     this.world.style.transform = `translate(${this.t.tx}px,${this.t.ty}px) scale(${this.t.scale})`;
   }
 
+  /** Wheel/cursor zoom — instant, because repeated input must not lag behind. */
   zoomAt(factor: number, cx: number, cy: number): void {
-    this.t = zoomAtPoint(this.t, factor, cx, cy);
-    this.apply();
+    this.set(zoomAtPoint(this.t, factor, cx, cy));
   }
 
   /** Zoom around the stage centre (the ± buttons). */
@@ -171,23 +195,74 @@ export class PanZoomController {
     this.zoomAt(factor, rect.width / 2, rect.height / 2);
   }
 
-  fit(worldW: number, worldH: number, options: FitOptions = {}): void {
+  /** Fit the tree into the stage; `animate` eases (the fit button). */
+  fit(worldW: number, worldH: number, options: FitOptions = {}, animate = false): void {
     const rect = this.stage.getBoundingClientRect();
-    this.t = fitTransform(rect.width, rect.height, worldW, worldH, options);
-    this.apply();
+    const target = fitTransform(rect.width, rect.height, worldW, worldH, options);
+    if (animate) this.animateTo(target);
+    else this.set(target);
   }
 
-  /** Centre a world point, keeping at least `minScale` (the focus action). */
-  centreOn(worldX: number, worldY: number, scale?: number): void {
+  /** Centre a world point, keeping at least 0.9 scale (the focus action). */
+  centreOn(worldX: number, worldY: number, scale?: number, animate = false): void {
     const rect = this.stage.getBoundingClientRect();
-    this.t.scale = clampScale(Math.max(scale ?? this.t.scale, 0.9));
-    this.t.tx = rect.width / 2 - (PAD + worldX) * this.t.scale;
-    this.t.ty = rect.height / 2 - (PAD + worldY) * this.t.scale;
-    this.apply();
+    const s = clampScale(Math.max(scale ?? this.t.scale, 0.9));
+    const target: Transform = {
+      tx: rect.width / 2 - (PAD + worldX) * s,
+      ty: rect.height / 2 - (PAD + worldY) * s,
+      scale: s,
+    };
+    if (animate) this.animateTo(target);
+    else this.set(target);
+  }
+
+  /**
+   * Ease the transform to `target` (fit, focus, double-click zoom). Any user
+   * gesture, direct `set()`, or a newer animation cancels the running one, so
+   * a tween can never fight the pointer or drift behind a re-layout.
+   */
+  animateTo(target: Transform, durationMs = ZOOM_ANIMATION_MS): void {
+    if (this.disposed) return;
+    const to: Transform = { ...target, scale: clampScale(target.scale) };
+    if (durationMs <= 0 || this.prefersReduced()) {
+      this.set(to);
+      return;
+    }
+    this.cancelAnimation();
+    const anim = { from: this.t, to, startedAt: performance.now(), duration: durationMs };
+    this.animation = anim;
+    const step = (): void => {
+      if (this.animation !== anim || this.disposed) return;
+      const progress = (performance.now() - anim.startedAt) / anim.duration;
+      if (progress >= 1) {
+        this.animation = null;
+        this.rafId = 0;
+        this.t = { ...anim.to };
+        this.apply();
+        return;
+      }
+      this.t = tweenTransform(anim.from, anim.to, progress);
+      this.apply();
+      this.rafId = requestAnimationFrame(step);
+    };
+    this.rafId = requestAnimationFrame(step);
+  }
+
+  private cancelAnimation(): void {
+    this.animation = null;
+    if (this.rafId) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = 0;
+    }
+  }
+
+  private prefersReduced(): boolean {
+    return this.options.reducedMotion ? this.options.reducedMotion() : prefersReducedMotion();
   }
 
   dispose(): void {
     this.disposed = true;
+    this.cancelAnimation();
     const stage = this.stage;
     stage.removeEventListener('pointerdown', this.onPointerDown);
     stage.removeEventListener('pointermove', this.onPointerMove);
@@ -217,6 +292,7 @@ export class PanZoomController {
 
   private onPointerDown = (event: PointerEvent): void => {
     if (this.disposed) return;
+    this.cancelAnimation();
     this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
     if (this.pointers.size === 2) {
@@ -350,12 +426,16 @@ export class PanZoomController {
     const target = event.target instanceof Element ? event.target : null;
     if (target?.closest(`${CONTROL_SELECTOR}, [data-person-id]`)) return;
     const local = this.localPoint(event);
-    this.zoomAt(1.3, local.x, local.y);
+    // Eased: a double-click is deliberate, so the zoom glides.
+    this.animateTo(zoomAtPoint(this.t, 1.3, local.x, local.y), 240);
   };
 
   private onKeyDown = (event: KeyboardEvent): void => {
     if (this.disposed) return;
     const pan = 60;
+    if (!['+', '=', '-', '_', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key))
+      return;
+    this.cancelAnimation();
     switch (event.key) {
       case '+':
       case '=':
@@ -377,8 +457,6 @@ export class PanZoomController {
       case 'ArrowDown':
         this.t.ty -= pan;
         break;
-      default:
-        return;
     }
     event.preventDefault();
     this.apply();

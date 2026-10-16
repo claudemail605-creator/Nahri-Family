@@ -187,6 +187,57 @@ A temporary capture script (deleted after review, deliberately not committed) ca
 - `POST /__mock/fail-people` injects a one-shot read failure scoped per account (`fail@example.test`), so parallel workers cannot consume each other's fault.
 - Pinch-zoom maths is unit-tested and tap/click/drag run in Chromium emulation; **no physical-device gesture run has happened** (L3).
 
+## Phase 3.5 — Motion pass (post-Phase-3 polish)
+
+Requested by the owner after Phase 3 ("try to add animations"). Everything is
+CSS-driven except the canvas tweens, and everything collapses under
+`prefers-reduced-motion: reduce`.
+
+### Gate commands and results
+
+| Command | Result |
+| --- | --- |
+| `cmd /c "npm run typecheck"` | clean (strict TypeScript, no errors) |
+| `cmd /c "npm test"` | **17 files, 171 tests, all passed** (+7: tween maths and `animateTo` interruption/cancellation) |
+| `cmd /c "npm run build"` | `index.html` 1.95 kB, CSS 28.18 kB (6.34 kB gzip), JS 396.87 kB (104.84 kB gzip) |
+| `cmd /c "npx playwright test"` | **63 passed, 1 skipped** (32 tests × desktop + mobile, ~32 s) against the mock Supabase |
+
+### What was added
+
+| Piece | Where | Behaviour |
+| --- | --- | --- |
+| Card settle-in | `render.ts` (`previousIds` diff) + `.tree-node.node-in` | ids absent from the previous paint fade in with a 20 ms-staggered cascade; survivors of a repaint never flash. First paint animates the whole tree |
+| Eased canvas transitions | `panzoom.ts` `animateTo()` + `tweenTransform()` | the fit button, the focus action and double-click zoom tween (~240–300 ms, ease-out); pan, pinch and wheel stay instant; any gesture, `set()` or newer animation cancels a running tween mid-flight. Target scale is clamped exactly as the instant path |
+| Sheet enter/exit | `.details` / `.details--out` keyframes + a timer-driven teardown in `view.ts` | slide-in from the edge (bottom sheet on mobile); close plays 180 ms out, then hides and clears; a re-select during the exit cancels cleanly |
+| Tooltip, view switches, hover | `.tooltip` keyframes, `.tree-stage`/`.tw-table` fade, hover-gated card lift, chip/button colour transitions | re-shown hosts re-fade; the card lift exists only where hover exists (`@media (hover: hover)`, so no sticky hover on touch) |
+| Reduced motion | `base.css` global override + `core/motion.ts` | CSS animations/transitions collapse to ~0 ms; JS tweens apply instantly; the card stagger is switched off entirely (no content hidden behind a delay) |
+
+### New/updated E2E tests
+
+| Test | What it proves |
+| --- | --- |
+| motion: chrome animates, and reduced motion switches it off | the computed `animation-duration` of the sheet (240 ms) and a tree card (260 ms) is real; under `emulateMedia({ reducedMotion: 'reduce' })` both collapse (0 ms / ~0) |
+| double-clicking the canvas zooms in (eased) | polls until the tween passes the pre-click scale (the previous version asserted the instant transform) |
+| selecting a card opens the details sheet... (extended) | closing the sheet still tears it down (hidden + emptied) after the animated exit — guards the timer-driven finish path |
+
+### Real bug found during the visual review (fixed)
+
+Clicking a card while hovering it re-showed the hover tooltip **over the freshly
+opened details sheet**: Chrome re-dispatches `mouseover` when the selection ring
+repaints under a stationary cursor, and the tooltip handler re-bound it.
+Reproduced with a DOM event trace (mouseover → pointerdown-hide → click → hide →
+mouseover again), fixed by skipping the tooltip for the selected person
+(`view.ts`), and re-verified with the same trace. This predates the motion
+pass — the animation just made it visible in a screenshot.
+
+### Visual review (screenshots, not pass/fail)
+
+A temporary script (git-ignored under `test-results/`) captured the tree
+mid-stagger, settled, the sheet mid-slide, mid-exit, gone, and a mid-tween zoom
+at 1440×900. Reviewed by eye: the cascade is visible without hiding content,
+the sheet fades and drifts out, the canvas reclaims the sheet's width cleanly,
+and the zoom tween keeps the double-clicked point sensible. `pageerror` count: 0.
+
 ## Manual checks that were performed
 
 - The security scan of the reference (`scan_security.cjs`, Phase 0) covered the

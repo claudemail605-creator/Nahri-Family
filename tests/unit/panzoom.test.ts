@@ -1,14 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   DRAG_THRESHOLD_MOUSE,
   DRAG_THRESHOLD_TOUCH,
   FIT_MIN_SCALE,
   MAX_SCALE,
   MIN_SCALE,
+  PanZoomController,
   clampScale,
   dragThreshold,
   fitTransform,
   isTapGesture,
+  tweenTransform,
   zoomAtPoint,
   type Transform,
 } from '../../src/features/tree/panzoom';
@@ -106,5 +108,105 @@ describe('fitTransform()', () => {
   it('pulls a taller-than-stage tree up to the top margin', () => {
     const t = fitTransform(stageW, stageH, 2000, 20000);
     expect(t.ty).toBeCloseTo(20 - PAD * FIT_MIN_SCALE + 40, 10);
+  });
+});
+
+describe('tweenTransform()', () => {
+  const from: Transform = { tx: 0, ty: 100, scale: 1 };
+  const to: Transform = { tx: 200, ty: 0, scale: 2 };
+
+  it('lands exactly on both ends', () => {
+    expect(tweenTransform(from, to, 0)).toEqual(from);
+    expect(tweenTransform(from, to, 1)).toEqual(to);
+  });
+
+  it('eases out — already past the linear midpoint at half progress', () => {
+    const mid = tweenTransform(from, to, 0.5);
+    expect(mid.tx).toBeGreaterThan(100);
+    expect(mid.ty).toBeLessThan(50);
+    expect(mid.scale).toBeGreaterThan(1.5);
+  });
+
+  it('clamps progress outside 0..1', () => {
+    expect(tweenTransform(from, to, -2)).toEqual(from);
+    expect(tweenTransform(from, to, 3)).toEqual(to);
+  });
+});
+
+describe('PanZoomController.animateTo()', () => {
+  function makeController(reduced: boolean): {
+    controller: PanZoomController;
+    world: HTMLElement;
+  } {
+    const stage = document.createElement('div');
+    const world = document.createElement('div');
+    stage.append(world);
+    document.body.append(stage);
+    const controller = new PanZoomController(stage, world, {}, { reducedMotion: () => reduced });
+    return { controller, world };
+  }
+
+  it('applies the target synchronously when reduced motion is on', () => {
+    const raf = vi.spyOn(window, 'requestAnimationFrame');
+    const { controller } = makeController(true);
+    controller.animateTo({ tx: 12, ty: -4, scale: 1.5 });
+    expect(controller.transform).toEqual({ tx: 12, ty: -4, scale: 1.5 });
+    expect(raf).not.toHaveBeenCalled();
+    raf.mockRestore();
+  });
+
+  it('steps through rAF frames and lands exactly on the target', () => {
+    const frames: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => frames.push(cb));
+    const cancel = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    let now = 1000;
+    const perf = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    const { controller } = makeController(false);
+
+    controller.animateTo({ tx: 100, ty: 0, scale: 2 }, 300);
+    expect(frames).toHaveLength(1);
+
+    now = 1150; // halfway in time; ease-out is already past halfway
+    frames.shift()!(0);
+    expect(controller.transform.tx).toBeGreaterThan(50);
+    expect(controller.transform.tx).toBeLessThan(100);
+    expect(controller.transform.scale).toBeGreaterThan(1.5);
+    expect(frames).toHaveLength(1);
+
+    now = 1300; // the end
+    frames.shift()!(0);
+    expect(controller.transform).toEqual({ tx: 100, ty: 0, scale: 2 });
+    expect(frames).toHaveLength(0);
+
+    raf.mockRestore();
+    cancel.mockRestore();
+    perf.mockRestore();
+  });
+
+  it('a direct set() interrupts the animation without a late jump', () => {
+    const frames: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => frames.push(cb));
+    const cancel = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    const perf = vi.spyOn(performance, 'now').mockImplementation(() => 500);
+    const { controller } = makeController(false);
+
+    controller.animateTo({ tx: 100, ty: 0, scale: 2 }, 300);
+    const pending = frames.shift()!;
+    controller.set({ tx: 7, ty: 8, scale: 1 });
+    expect(cancel).toHaveBeenCalled();
+    // The stale frame must be inert even if the browser fires it.
+    pending(0);
+    expect(controller.transform).toEqual({ tx: 7, ty: 8, scale: 1 });
+    expect(frames).toHaveLength(0);
+
+    raf.mockRestore();
+    cancel.mockRestore();
+    perf.mockRestore();
+  });
+
+  it('clamps the target scale to the readable range', () => {
+    const { controller } = makeController(true);
+    controller.animateTo({ tx: 0, ty: 0, scale: 99 });
+    expect(controller.transform.scale).toBe(MAX_SCALE);
   });
 });

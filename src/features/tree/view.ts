@@ -1,9 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { I18n, MessageKey } from '../../core/i18n';
 import { getDisplayName } from '../../core/i18n/display';
+import { prefersReducedMotion } from '../../core/motion';
 import { fetchAllPeople } from '../../data/people';
 import { h } from '../../ui/dom';
-import { extractMessage } from '../auth/errors';import {
+import { extractMessage } from '../auth/errors';
+import {
   computeVisibility,
   createFilters,
   filtersActive,
@@ -66,6 +68,8 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
   let loading = true; // start hidden-until-loaded so the empty note never flashes at boot
   let errorMessage: string | null = null;
   let pulseTimer: number | null = null;
+  let renderedIds = new Set<string>();
+  let detailsCloseTimer: number | null = null;
 
   /* ------------------------------- elements ------------------------------ */
 
@@ -366,7 +370,7 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
 
   function renderTree(refit: boolean): void {
     layout = layoutTree(vis.vRoots, vis.vKids, collapsed);
-    renderTreeInto(world, {
+    renderedIds = renderTreeInto(world, {
       i18n,
       lang: i18n.currentLang(),
       model,
@@ -374,6 +378,7 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
       collapsed,
       layout,
       selectedId,
+      previousIds: renderedIds,
     });
     if (layout.pos.size && (refit || !fitted)) {
       fitTree();
@@ -382,14 +387,19 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     syncSelection();
   }
 
-  function fitTree(): void {
+  function fitTree(animate = false): void {
     if (!layout || !layout.pos.size) return;
     const roots = vis.vRoots.filter((r) => layout!.pos.has(r.id));
     const first = roots[0] ? layout.pos.get(roots[0].id) : null;
-    panzoom.fit(layout.width, layout.height, {
-      multiRoot: roots.length > 1,
-      focus: first ? { x: first.x + first.w / 2, y: first.y } : null,
-    });
+    panzoom.fit(
+      layout.width,
+      layout.height,
+      {
+        multiRoot: roots.length > 1,
+        focus: first ? { x: first.x + first.w / 2, y: first.y } : null,
+      },
+      animate,
+    );
   }
 
   function renderTableView(): void {
@@ -524,6 +534,7 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     tr?.classList.add('sel');
     const person = model.byId.get(id);
     if (person) {
+      cancelDetailsClose();
       renderDetails(detailsHost, person, model, {
         i18n,
         lang: i18n.currentLang(),
@@ -538,11 +549,34 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     if (options.focus) focusPerson(id);
   }
 
-  function closeDetails(): void {
+  /** Cancels a pending sheet close so a quick re-select never races the exit. */
+  function cancelDetailsClose(): void {
+    if (detailsCloseTimer != null) {
+      window.clearTimeout(detailsCloseTimer);
+      detailsCloseTimer = null;
+    }
+    detailsHost.classList.remove('details--out');
+  }
+
+  function closeDetails(immediate = false): void {
     selectedId = null;
-    detailsHost.hidden = true;
-    detailsHost.removeAttribute('data-person-id');
-    detailsHost.replaceChildren();
+    const finish = (): void => {
+      if (detailsCloseTimer != null) {
+        window.clearTimeout(detailsCloseTimer);
+        detailsCloseTimer = null;
+      }
+      detailsHost.classList.remove('details--out');
+      detailsHost.hidden = true;
+      detailsHost.removeAttribute('data-person-id');
+      detailsHost.replaceChildren();
+    };
+    if (immediate || detailsHost.hidden || prefersReducedMotion()) {
+      finish();
+    } else {
+      // Let the sheet animate out, then tear down (≈ the CSS sheet-out time).
+      detailsHost.classList.add('details--out');
+      detailsCloseTimer = window.setTimeout(finish, 190);
+    }
     syncSelection();
     for (const row of tableHost.querySelectorAll('tr.sel')) row.classList.remove('sel');
   }
@@ -561,7 +595,7 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     refresh(false);
     const v = layout?.pos.get(id);
     if (!v) return;
-    panzoom.centreOn(v.x + v.w / 2, v.y + NODE_H / 2);
+    panzoom.centreOn(v.x + v.w / 2, v.y + NODE_H / 2, undefined, true);
     const card = world.querySelector<HTMLElement>(`.pcard[data-person-id="${cssEscape(id)}"]`);
     if (card) {
       card.classList.add('pulse');
@@ -664,7 +698,7 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
 
   zoomInBtn.addEventListener('click', () => panzoom.zoomBy(1.25));
   zoomOutBtn.addEventListener('click', () => panzoom.zoomBy(1 / 1.25));
-  zoomFitBtn.addEventListener('click', () => fitTree());
+  zoomFitBtn.addEventListener('click', () => fitTree(true));
   expandAllBtn.addEventListener('click', () => {
     collapsed.clear();
     refresh(true);
@@ -753,12 +787,20 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     }
   });
 
-  // Hover tooltips (desktop).
+  // Hover tooltips (desktop). The selected person is skipped: the details
+  // sheet already shows them — and Chrome re-fires mouseover when the
+  // selection ring repaints under a stationary cursor, which used to pop the
+  // tooltip back over the freshly opened sheet.
   world.addEventListener('mouseover', (event) => {
     const target = event.target instanceof Element ? event.target : null;
     const card = target?.closest<HTMLElement>('.pcard[data-person-id]');
     if (!card) return;
-    const person = card.dataset.personId ? model.byId.get(card.dataset.personId) : null;
+    const id = card.dataset.personId;
+    if (id && id === selectedId) {
+      hideTooltip();
+      return;
+    }
+    const person = id ? model.byId.get(id) : null;
     if (person) showTooltip(person, card, card.dataset.spouse === '1');
   });
   world.addEventListener('mouseout', (event) => {
@@ -814,6 +856,7 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     dispose() {
       disposed = true;
       if (pulseTimer != null) window.clearTimeout(pulseTimer);
+      if (detailsCloseTimer != null) window.clearTimeout(detailsCloseTimer);
       unsubscribeLanguage();
       panzoom.dispose();
     },
