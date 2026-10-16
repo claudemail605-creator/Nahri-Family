@@ -55,8 +55,8 @@ test('signs in as admin, shows the profile, signs out', async ({ page }) => {
   await signIn(page, 'admin@example.test', PASSWORD);
 
   await expect(page.locator('#account-chip')).toBeVisible();
-  await expect(page.locator('.profile-name')).toContainText('Family Admin');
-  await expect(page.locator('.profile-name .tag--admin')).toHaveText(en['admin.adminTag']);
+  await expect(page.locator('#account-chip .account-chip__name')).toContainText('Family Admin');
+  await expect(page.locator('#account-chip .tag--admin')).toHaveText(en['admin.adminTag']);
   await expect(page.locator('#sign-out')).toBeVisible();
   // The gate is gone while the workspace is up.
   await expect(page.locator('#sign-in-form')).toHaveCount(0);
@@ -160,7 +160,7 @@ test('an invite link sets a password, enters the app, and the password signs in 
   await page.locator('#set-pw-confirm').fill('invitee-pass-1');
   await page.locator('#set-password-submit').click();
   await expect(page.locator('#account-chip')).toBeVisible();
-  await expect(page.locator('.profile-name')).toContainText('Invited Active');
+  await expect(page.locator('#account-chip .account-chip__name')).toContainText('Invited Active');
   expect(new URL(page.url()).hash).toBe('');
   expect(page.url()).not.toContain('access_token');
 
@@ -220,7 +220,7 @@ test('editing the profile saves the name and the language (RTL) and both persist
 
   // Both survive a reload (profile.language wins at boot).
   await page.reload();
-  await expect(page.locator('.profile-name')).toContainText('Profile Tester Two');
+  await expect(page.locator('#account-chip .account-chip__name')).toContainText('Profile Tester Two');
   await expect(page.locator('html')).toHaveAttribute('dir', targetDir);
 });
 
@@ -247,6 +247,6 @@ test('a signed-in session survives a page reload', async ({ page }) => {
 
   await page.reload();
   await expect(page.locator('#account-chip')).toBeVisible();
-  await expect(page.locator('.profile-name')).toContainText('Branch Editor');
+  await expect(page.locator('#account-chip .account-chip__name')).toContainText('Branch Editor');
   await expect(page.locator('#sign-in-form')).toHaveCount(0);
 });

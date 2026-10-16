@@ -3,7 +3,7 @@
 Every test that exists, how to run it, and what it proved — kept current after
 every phase. Every claim in this file corresponds to a command that was really
 run; outputs below were copied from the terminal on **2026-10-16**
-(Phases 1–2).
+(Phases 1–3).
 
 ## Test levels (what is verified where)
 
@@ -127,6 +127,65 @@ earlier in the same process — a fixture quirk, not an app bug.
 - `POST /auth/v1/recover` always answers 200 and sends no email.
 - The mock re-implements the RLS rules for the two tables the app touches
   (`profiles`, `branch_access`); real enforcement stays in Postgres.
+
+## Phase 3 — Tree and profiles
+
+### Gate commands and results
+
+| Command | Result |
+| --- | --- |
+| `cmd /c "npm run typecheck"` | clean (strict TypeScript, no errors) |
+| `cmd /c "npm test"` | **17 files, 164 tests, all passed** (Vitest 5.0.5, jsdom) |
+| `cmd /c "npm run build"` | `index.html` 1.95 kB, CSS 26.98 kB (6.10 kB gzip), JS 395.10 kB (104.19 kB gzip) |
+| `cmd /c "npx playwright test"` | **61 passed, 1 skipped** (31 tests × desktop + mobile projects, ~33 s) — the `vite build --mode e2e` bundle against the mock Supabase on `127.0.0.1:54321`; the skip is the desktop-only hover-tooltip test on the mobile project, by design |
+
+### Unit tests added in Phase 3
+
+| File | What it proves |
+| --- | --- |
+| `dates.test.ts` | archive date parsing (day-first `DD/MM/YYYY`, `-`/`.` separators, bare year → 1 January, ISO fallback, unusable → null), whole-year ages (living = to today, deceased = at death, unparseable death date → no invented age), timestamp formatting |
+| `people.test.ts` | the paged read against a stub query builder: `select *` on `people`, unique `dob`+`id` ordering, 1000-row default pages, one extra request after an exact multiple, the explicit `is_deleted = false` filter for non-admins only, server errors thrown instead of partial data |
+| `tree-model.test.ts` | model from raw rows: column mapping, parent/child wiring, generation depth, missing parent → root, rows without id/name dropped, a parent loop parked at the root instead of hanging, soft-deleted handling, stored Gender labels, the lower-cased three-script search haystack, ancestor-chain walk |
+| `tree-filters.test.ts` | search (all whitespace-separated terms required, case-insensitive, cross-script queries), generation/gender/status/branch/place/qualification/has-* filters, `isAnyFilterActive`, and the visibility rules (a match re-attaches to the nearest visible ancestor, the branch person stays visible, soft-deleted people stay out). The case-insensitivity test caught a real bug: query terms were never lower-cased in `personMatches` |
+| `tree-layout.test.ts` | subtree-width layout: lone card at the origin with PAD, spouse card widens the node, parents centred over their children, generations stacked by band height, bands re-anchored for filtered roots, collapsed subtrees hidden (node itself kept), multiple-root spacing, empty tree, determinism |
+| `panzoom.test.ts` | scale clamps (readable minimum, max), zoom keeps the world point under the cursor fixed, out-and-back restores the transform, clamping still moves toward the cursor; tap detection (short still gesture accepted, moved-past-threshold and long-press rejected, mouse threshold tighter than touch); fit rules (never above 1 for a small tree, clamped minimum for a huge tree, first root centred when overflowing sideways, left edge for several roots, top margin for a tall tree) |
+
+### End-to-end tests added in Phase 3 (`tests/e2e/tree.spec.ts`, desktop + mobile)
+
+| Test | What it proves |
+| --- | --- |
+| renders the family tree with generation bands and spouse cards | 13 people, 3 bands (even generations only), spouse drawn as a card (`Amir`/`Fatima`), the soft-deleted fixture absent; the stage reaches the viewport edge (regression guard for the flex fix below) |
+| admin can reveal soft-deleted people | `#show-deleted` → 14 people incl. `Kashif Fixture`; unchecking → 13 |
+| editor never sees deleted people or the toggle | role-gated by the model, not by CSS |
+| selecting a card opens the details sheet and relatives navigate | sheet shows name, age at death, children count, birthplace; a relative button moves the selection and pulses the card |
+| search filters the tree; an impossible search shows the honest empty state | `gul` → 1 of 13, one node; `zzzz` → empty-state note and an empty canvas; clearing restores |
+| generation chips and status filters narrow the tree, reset clears them | Gen 4 → 2, deceased → 4, branch `person-b` → 7, reset restores 13 |
+| collapse hides a subtree, keeps the card anchored, and expands again | 3 children + 6 descendants hidden (4 nodes remain), toggle label `+ 3`, the clicked card stays within 2 px; re-expand → 13; collapse-all → 2 roots, expand-all → 13 |
+| table view shows all 23 columns, sorts, and selects | 23 headers, 13 rows, generation sort ascending/descending (first row flips `person-a` → `person-h`), a row click opens the same sheet (`Saima Fixture`), back to the tree |
+| zoom buttons change the scale | `#zoom-in` raises the scale; `#zoom-out` returns to the previous value |
+| double-clicking the canvas zooms in | the `dblclick` handler raises the scale |
+| hovering a card shows the tooltip (desktop) | Bahadur's tooltip with the generation label (skipped on the mobile project by design) |
+| keyboard: a focused card opens on Enter | cards are keyboard-reachable; Enter opens the sheet |
+| focusing a filtered-out relative clears the filters with a toast | a hidden relative from the sheet clears the filters, shows the toast, centres the person and pulses the card |
+| a failed load shows the retry banner and recovers | injected fault → banner; retry → the tree renders |
+
+### Updated E2E tests
+
+`auth.spec.ts` now targets the workspace account chip (`#account-chip .account-chip__name`, admin tag) instead of the removed profile view; the profile-edit and session tests run against the workspace shell.
+
+### Visual review (screenshots, not pass/fail)
+
+A temporary capture script (deleted after review, deliberately not committed) captured desktop 1440×900 (tree light, details, table, dark, Urdu RTL) and Pixel 7 (tree, details sheet, filter drawer). Reviewed by eye: ledger cards, generation bands, elbow connectors, spouse cards, mobile toolbar wrapping, the drawer, RTL chrome with the canvas staying LTR, the dark palette. The review caught two real bugs, both fixed and re-verified:
+
+1. **Collapse toggle mispositioned** — the node's world offset was counted twice; toggles floated near the wrong card and, on the narrow mobile viewport, sat off-screen (desktop had accidentally contained the wrong position, which is why E2E on desktop alone missed it).
+2. **Canvas collapsed to its minimum height on mobile** — `.tree-workspace { height: 100% }` resolved to auto against a flex-sized parent, disabling cross-axis stretch; desktop only looked right because the sidebar's content height happened to fill the gap.
+
+### Phase 3 mock additions (documented, not hidden)
+
+- 14 fictional people (`person-a` … `person-n`, one soft-deleted) across 5 generations, two roots, several spouse pairs; `person-a` carries `updated_at` + one `audit_log` row for the admin "Last edited" line.
+- `GET /rest/v1/people` supports `order`, `range` and `is_deleted`; `GET /rest/v1/audit_log` is admin-only — both reproduce the RLS refusals the UI must handle.
+- `POST /__mock/fail-people` injects a one-shot read failure scoped per account (`fail@example.test`), so parallel workers cannot consume each other's fault.
+- Pinch-zoom maths is unit-tested and tap/click/drag run in Chromium emulation; **no physical-device gesture run has happened** (L3).
 
 ## Manual checks that were performed
 

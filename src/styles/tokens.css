@@ -58,6 +58,14 @@
   --ivory-300: #e9e1d0;
   --ivory-400: #d8cdb6;
 
+  /* -- Gender rails (tree cards, chips, avatars) -------------------------- */
+  --gender-male: #40527c;
+  --gender-male-soft: #e7ebf5;
+  --gender-female: #a8623a;
+  --gender-female-soft: #fbeee6;
+  --gender-unknown: #8891a1;
+  --gender-unknown-soft: #f3eee3;
+
   /* -- Semantic: light ---------------------------------------------------- */
   --bg: var(--ivory-100);
   --bg-elevated: var(--ivory-50);
@@ -159,6 +167,13 @@
   --info: #93a4d3;
   --info-soft: #202944;
   --info-text: #b9c6e8;
+
+  --gender-male: #93a4d3;
+  --gender-male-soft: #202944;
+  --gender-female: #c07c52;
+  --gender-female-soft: #3a2a20;
+  --gender-unknown: #7e879d;
+  --gender-unknown-soft: #232b45;
 
   --shadow-1: 0 1px 2px rgb(0 0 0 / 0.35), 0 1px 3px rgb(0 0 0 / 0.28);
   --shadow-2: 0 2px 6px rgb(0 0 0 / 0.38), 0 8px 22px rgb(0 0 0 / 0.3);

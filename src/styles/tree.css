@@ -1,0 +1,907 @@
+/* ============================================================================
+   Nahri Family — tree workspace
+   ----------------------------------------------------------------------------
+   The canvas (stage + world + cards), the toolbar, the filter sidebar, the
+   details sheet and the table. Notes:
+     - the world is transformed by JS (translate + scale), so its children are
+       laid out in world pixels and never animate on their own;
+     - the canvas keeps dir="ltr" even in Urdu (set in JS); the chrome around
+       it flips with the document;
+     - duplicated small helpers (.btn--sm, .chip, .icon-btn) live here because
+       they are only used by this feature.
+   ========================================================================= */
+
+.tree-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* No height: 100% here — as a stretched flex item it fills .view-host, and a
+     percentage height against a flex-sized parent resolves to auto (which
+     would collapse the stage to its minimum). */
+  background: var(--bg);
+}
+
+/* ---- Toolbar ------------------------------------------------------------- */
+
+.tw-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.tw-search {
+  flex: 1 1 220px;
+  min-width: 160px;
+  max-width: 420px;
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+
+.tw-search:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.tw-tabs {
+  display: inline-flex;
+}
+
+.tw-tab {
+  min-height: 36px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tw-tab:first-child {
+  border-start-start-radius: var(--radius-md);
+  border-end-start-radius: var(--radius-md);
+}
+
+.tw-tab:last-child {
+  border-start-end-radius: var(--radius-md);
+  border-end-end-radius: var(--radius-md);
+  border-inline-start-width: 0;
+}
+
+.tw-tab:hover {
+  color: var(--text);
+}
+
+.tw-tab[aria-pressed='true'] {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+
+.tw-count {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.tw-toolbar__spacer {
+  flex: 1;
+}
+
+.tw-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.tree-workspace[data-view='table'] .tw-tools {
+  display: none;
+}
+
+/* Buttons that only this feature uses. */
+.btn--sm {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--text-md);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* ---- Body layout --------------------------------------------------------- */
+
+.tw-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+}
+
+.tw-sidebar {
+  flex: none;
+  width: 260px;
+  padding: var(--space-3) var(--space-3) var(--space-6);
+  border-inline-end: 1px solid var(--border);
+  background: var(--bg-elevated);
+  overflow-y: auto;
+}
+
+.tw-sidebar__title {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+}
+
+.tw-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.stat {
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.tw-field {
+  margin-top: var(--space-3);
+}
+
+.tw-field__label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tw-select {
+  width: 100%;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.chip {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.chip--on {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+
+.chip--male.chip--on {
+  background: var(--gender-male);
+  border-color: var(--gender-male);
+  color: #fff;
+}
+
+.chip--female.chip--on {
+  background: var(--gender-female);
+  border-color: var(--gender-female);
+  color: #fff;
+}
+
+.tw-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+#reset-filters {
+  margin-top: var(--space-4);
+}
+
+/* ---- Main column --------------------------------------------------------- */
+
+.tw-main {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger-text);
+  font-size: var(--text-sm);
+}
+
+/* `display: flex` above would otherwise defeat the [hidden] attribute. */
+.load-error[hidden] {
+  display: none;
+}
+
+.tw-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  max-width: 320px;
+  padding: var(--space-4) var(--space-5);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  text-align: center;
+  pointer-events: none;
+}
+
+/* ---- Stage & world ------------------------------------------------------- */
+
+.tree-stage {
+  position: relative;
+  flex: 1;
+  min-height: 280px;
+  overflow: hidden;
+  overflow: clip; /* the canvas must never scroll — only the transform moves it */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+  background-color: var(--bg);
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--border) 70%, transparent) 1px, transparent 1px);
+  background-size: 26px 26px;
+}
+
+.tree-stage.panning {
+  cursor: grabbing;
+}
+
+.tree-stage:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.tree-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.tree-links {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.tree-link {
+  fill: none;
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.tree-bond {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 1 5;
+  stroke-linecap: round;
+}
+
+.band {
+  position: absolute;
+  left: 0;
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+  background: color-mix(in srgb, var(--ink-100) 38%, transparent);
+  pointer-events: none;
+}
+
+[data-theme='dark'] .band {
+  background: color-mix(in srgb, var(--ink-900) 45%, transparent);
+}
+
+.band__label {
+  position: absolute;
+  top: 6px;
+  inset-inline-start: 14px;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ---- Cards --------------------------------------------------------------- */
+
+.tree-node {
+  position: absolute;
+}
+
+.pcard {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 80px; /* mirrors NODE_H in layout.ts */
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.pcard--male {
+  --gender-c: var(--gender-male);
+  --gender-soft: var(--gender-male-soft);
+}
+
+.pcard--female {
+  --gender-c: var(--gender-female);
+  --gender-soft: var(--gender-female-soft);
+}
+
+.pcard--unknown {
+  --gender-c: var(--gender-unknown);
+  --gender-soft: var(--gender-unknown-soft);
+}
+
+.pcard__rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-start: 0;
+  width: 4px;
+  background: var(--gender-c);
+}
+
+.pcard__avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--gender-soft);
+  color: var(--gender-c);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.pcard__body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.pcard__name {
+  font-family: var(--font-display);
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pcard__sub,
+.pcard__dates {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pcard__dates {
+  color: var(--text-faint);
+}
+
+.pcard__dagger {
+  position: absolute;
+  top: 6px;
+  inset-inline-end: 8px;
+  color: var(--accent-strong);
+  font-size: var(--text-sm);
+}
+
+.pcard--deceased .pcard__name {
+  color: var(--text-muted);
+}
+
+.pcard--deleted {
+  border-style: dashed;
+  opacity: 0.72;
+}
+
+.pcard:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-2);
+}
+
+.pcard.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent), var(--shadow-2);
+}
+
+.pcard:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.pcard.pulse {
+  animation: card-pulse 1.4s ease-out 1;
+}
+
+@keyframes card-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 70%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 14px transparent;
+  }
+  100% {
+    box-shadow: var(--shadow-1);
+  }
+}
+
+.pcard--spouse {
+  background: var(--surface-2);
+  border-style: dashed;
+}
+
+.pcard__label {
+  position: absolute;
+  top: 6px;
+  inset-inline-start: 10px;
+  color: var(--accent-strong);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pcard--spouse .pcard__body {
+  padding-top: 12px;
+}
+
+/* Collapse toggle on the card's bottom edge. */
+.tg {
+  position: absolute;
+  transform: translateX(-50%);
+  z-index: 3;
+  min-width: 28px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--shadow-1);
+}
+
+.tg:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.tg:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* ---- Tooltip ------------------------------------------------------------- */
+
+.tooltip {
+  position: absolute;
+  z-index: 30;
+  max-width: 300px;
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--ink-950);
+  color: var(--ivory-100);
+  box-shadow: var(--shadow-3);
+  font-size: var(--text-sm);
+  pointer-events: none;
+}
+
+.tip-head h4 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+}
+
+.tip-sub {
+  color: var(--copper-200);
+  font-size: var(--text-xs);
+}
+
+.tip-dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px var(--space-3);
+  margin: var(--space-2) 0 0;
+}
+
+.tip-dl dt {
+  color: var(--ink-300);
+  font-size: var(--text-xs);
+}
+
+.tip-dl dd {
+  margin: 0;
+  text-align: end;
+}
+
+.tip-more {
+  margin-top: var(--space-2);
+  color: var(--copper-200);
+  font-size: var(--text-xs);
+  font-style: italic;
+}
+
+/* ---- Table --------------------------------------------------------------- */
+
+.tw-table {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.tree-table {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  font-size: var(--text-sm);
+}
+
+.tree-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 0;
+  border-bottom: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  text-align: start;
+  white-space: nowrap;
+}
+
+.tree-table th .th-btn {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-align: start;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.tree-table th .th-btn:hover {
+  color: var(--text);
+}
+
+.tree-table th.sorted .th-btn {
+  color: var(--accent-strong);
+}
+
+.tree-table td {
+  max-width: 260px;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-table tbody tr {
+  cursor: pointer;
+}
+
+.tree-table tbody tr:hover {
+  background: var(--surface-2);
+}
+
+.tree-table tbody tr.sel {
+  background: var(--accent-soft);
+}
+
+.tree-table tbody tr.nomatch {
+  opacity: 0.45;
+}
+
+.tree-table td.dash {
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* ---- Details sheet ------------------------------------------------------- */
+
+.details {
+  flex: none;
+  width: 340px;
+  padding: var(--space-4);
+  border-inline-start: 1px solid var(--border);
+  background: var(--bg-elevated);
+  overflow-y: auto;
+}
+
+.p-head {
+  position: relative;
+  padding-inline-end: 44px;
+}
+
+.p-close {
+  position: absolute;
+  top: 0;
+  inset-inline-end: 0;
+}
+
+.p-avatar {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--text-md);
+  font-weight: 700;
+}
+
+.p-avatar--male {
+  background: var(--gender-male-soft);
+  color: var(--gender-male);
+}
+
+.p-avatar--female {
+  background: var(--gender-female-soft);
+  color: var(--gender-female);
+}
+
+.p-avatar--unknown {
+  background: var(--gender-unknown-soft);
+  color: var(--gender-unknown);
+}
+
+/* Tags the panel and chips add on top of the shared .tag base. */
+.tag--male {
+  background: var(--gender-male-soft);
+  color: var(--gender-male);
+}
+
+.tag--female {
+  background: var(--gender-female-soft);
+  color: var(--gender-female);
+}
+
+.tag--unknown,
+.tag--gray {
+  background: var(--surface-3);
+  color: var(--text-muted);
+}
+
+.p-name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+}
+
+.p-nick {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-style: italic;
+}
+
+.p-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.p-sec {
+  margin-top: var(--space-5);
+}
+
+.p-sec h5 {
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.p-row {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: var(--text-sm);
+}
+
+.p-row__k {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.p-row__v {
+  overflow-wrap: anywhere;
+}
+
+.p-row__v--full {
+  grid-column: 1 / -1;
+  font-size: var(--text-base);
+}
+
+.rel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.rel-label {
+  margin-top: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.rel__btn {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.rel__btn:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.rel__btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.p-none {
+  margin-top: var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* ---- Small screens ------------------------------------------------------- */
+
+#filters-toggle {
+  display: none;
+}
+
+@media (max-width: 980px) {
+  #filters-toggle {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .tw-sidebar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    inset-inline-start: 0;
+    z-index: var(--z-drawer);
+    width: min(320px, 86vw);
+    transform: translateX(-102%);
+    transition: transform var(--dur-base) var(--ease-out);
+    box-shadow: var(--shadow-3);
+  }
+
+  [dir='rtl'] .tw-sidebar {
+    transform: translateX(102%);
+  }
+
+  .tw--filters-open .tw-sidebar {
+    transform: translateX(0);
+  }
+
+  .details {
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: var(--z-drawer);
+    width: auto;
+    max-height: 62vh;
+    border-top: 1px solid var(--border-strong);
+    border-inline-start: 0;
+    border-start-start-radius: var(--radius-lg);
+    border-start-end-radius: var(--radius-lg);
+    box-shadow: var(--shadow-3);
+  }
+
+  .tw-search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tw-sidebar {
+    transition: none;
+  }
+
+  .pcard.pulse {
+    animation: none;
+  }
+}

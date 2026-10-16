@@ -10,7 +10,7 @@ import {
   type Windowish,
 } from './features/auth/link';
 import { openProfileForm } from './features/profile/form';
-import { buildProfileView } from './features/profile/view';
+import { buildTreeWorkspace, type TreeWorkspace } from './features/tree/view';
 import { renderAccountChip } from './shell/account';
 import { buildHeader } from './shell/header';
 import { h } from './ui/dom';
@@ -95,17 +95,27 @@ export function mountApp(root: HTMLElement, options: AppOptions = {}): AppInstan
 
   let renderedProfile: ProfileRow | null = null;
   let renderedAccount: { profile: ProfileRow | null; isAdmin: boolean } | null = null;
+  let workspace: TreeWorkspace | null = null;
 
-  function renderWorkspace(profile: ProfileRow): void {
-    viewHost.replaceChildren(
-      buildProfileView(profile, auth.isAdmin(), {
-        i18n,
-        onEdit: openEditProfile,
-        onSignOut: () => {
-          void auth.signOut();
-        },
-      }),
-    );
+  function renderWorkspace(_profile: ProfileRow): void {
+    workspace?.dispose();
+    workspace = null;
+    // A ready profile implies a working client; the guard keeps the shell
+    // honest if that ever changes (viewHost just stays empty).
+    if (!options.client) return;
+    const instance = buildTreeWorkspace({
+      i18n,
+      client: options.client,
+      isAdmin: auth.isAdmin(),
+      onSignOut: () => {
+        void auth.signOut();
+      },
+      toast: (message) => {
+        toasts.show(message);
+      },
+    });
+    workspace = instance;
+    viewHost.replaceChildren(instance.element);
     i18n.apply();
   }
 
@@ -131,6 +141,13 @@ export function mountApp(root: HTMLElement, options: AppOptions = {}): AppInstan
       renderWorkspace(state.profile);
     } else if (!ready) {
       renderedProfile = null;
+      // Drop the tree on sign-out (reference `clearTree()`): the CSS already
+      // hides the workspace, but family data should not stay in the DOM.
+      if (workspace) {
+        workspace.dispose();
+        workspace = null;
+        viewHost.replaceChildren();
+      }
     }
   }
 
@@ -181,6 +198,10 @@ export function mountApp(root: HTMLElement, options: AppOptions = {}): AppInstan
     dispose() {
       unsubscribeShell();
       unsubscribeProfileLanguage();
+      if (workspace) {
+        workspace.dispose();
+        workspace = null;
+      }
       gate.dispose();
       auth.dispose();
     },

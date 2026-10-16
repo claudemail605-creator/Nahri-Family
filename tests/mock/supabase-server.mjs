@@ -1,10 +1,11 @@
 /*
  * Mock Supabase for end-to-end tests.
  *
- * Serves just enough of GoTrue and PostgREST for the app's Phase 2 flows:
- * password sign-in / refresh / logout, recover, set-password (PUT /user),
- * profiles + branch_access reads/updates under the same RLS rules the real
- * database enforces, and a couple of /__mock/* helpers for the tests.
+ * Serves just enough of GoTrue and PostgREST for the app's flows: password
+ * sign-in / refresh / logout, recover, set-password (PUT /user), profiles +
+ * branch_access reads/updates under the same RLS rules the real database
+ * enforces, the people / audit_log reads the tree workspace needs, and a
+ * couple of /__mock/* helpers for the tests.
  *
  * Fixtures are fictional (example.test) and passwords are plain text — this
  * server only ever handles fake accounts on 127.0.0.1. Tokens are unsigned
@@ -74,6 +75,203 @@ const USERS = [
     { full_name: 'Lang Tester', role: 'editor', active: true, language: 'en' },
     ['person-a'],
   ),
+  makeUser(
+    '99999999-9999-4999-8999-999999999999',
+    'fail@example.test',
+    { full_name: 'Load Failure Tester', role: 'editor', active: true, language: 'en' },
+    [],
+  ),
+];
+
+/* ----------------------------- people fixtures ---------------------------- */
+
+/*
+ * A small fictional family for the tree tests — five generations, two roots,
+ * a spouse-text pair, a soft-deleted row, unknown gender and a text-only
+ * date. None of it resembles real family data; ids are readable slugs so
+ * assertions can name a person directly.
+ */
+function person(over) {
+  return {
+    id: null,
+    legacy_id: null,
+    parent_id: null,
+    gender: null,
+    full_name: null,
+    nick_name: null,
+    fathers_name: null,
+    mothers_name: null,
+    spouse_name: null,
+    spouse_father_name: null,
+    dob: null,
+    dob_text: null,
+    place_of_birth: null,
+    qualification: null,
+    dod: null,
+    dod_text: null,
+    place_of_burial: null,
+    name_ur: null,
+    name_hi: null,
+    notes: null,
+    photo_path: null,
+    source: 'fixture.xlsx',
+    is_deleted: false,
+    created_by: '11111111-1111-4111-8111-111111111111',
+    updated_by: '11111111-1111-4111-8111-111111111111',
+    created_at: NOW_ISO,
+    updated_at: null,
+    path: [],
+    ...over,
+  };
+}
+
+const PEOPLE = [
+  person({
+    id: 'person-a',
+    legacy_id: 'F1',
+    full_name: 'Amir Fixture',
+    gender: 'Male',
+    spouse_name: 'Fatima Fixture',
+    spouse_father_name: 'Yusuf Fixture',
+    dob: '1890-05-01',
+    dod: '1965-02-02',
+    place_of_birth: 'Fixtureabad',
+    qualification: 'Hafiz',
+    place_of_burial: 'Fixtureabad Cemetery',
+    name_ur: 'عامر',
+    name_hi: 'आमिर',
+    notes: 'Family patriarch (fixture).',
+    updated_at: '2026-01-02T10:00:00.000Z',
+    path: ['11111111-1111-4111-8111-111111111111'],
+  }),
+  person({
+    id: 'person-b',
+    full_name: 'Bahadur Fixture',
+    gender: 'Male',
+    parent_id: 'person-a',
+    spouse_name: 'Khadija Fixture',
+    dob: '1920-03-12',
+    place_of_birth: 'Fixtureabad',
+    name_ur: 'بہادر',
+    name_hi: 'बहादुर',
+    path: ['11111111-1111-4111-8111-111111111111'],
+  }),
+  person({
+    id: 'person-c',
+    full_name: 'Saima Fixture',
+    gender: 'Female',
+    parent_id: 'person-a',
+    dob: '1925-08-20',
+    dod: '2010-01-01',
+    qualification: 'B.A.',
+    path: ['11111111-1111-4111-8111-111111111111'],
+  }),
+  person({
+    id: 'person-j',
+    full_name: 'Jamal Fixture',
+    parent_id: 'person-a',
+    dob_text: 'year unknown',
+    path: ['11111111-1111-4111-8111-111111111111'],
+  }),
+  person({
+    id: 'person-d',
+    full_name: 'Dawood Fixture',
+    gender: 'Male',
+    parent_id: 'person-b',
+    spouse_name: 'Safiya Fixture',
+    dob: '1950-11-05',
+    dob_text: 'circa 1950',
+    place_of_birth: 'Karachi',
+    path: ['11111111-1111-4111-8111-111111111111'],
+  }),
+  person({
+    id: 'person-e',
+    full_name: 'Nadia Fixture',
+    gender: 'Female',
+    parent_id: 'person-b',
+    dob: '1955-02-14',
+    name_ur: 'نادیہ',
+    name_hi: 'नादिया',
+    path: ['11111111-1111-4111-8111-111111111111'],
+  }),
+  person({
+    id: 'person-k',
+    full_name: 'Kashif Fixture',
+    gender: 'Male',
+    parent_id: 'person-b',
+    dob: '1958-01-01',
+    is_deleted: true,
+    path: ['11111111-1111-4111-8111-111111111111'],
+  }),
+  person({
+    id: 'person-f',
+    full_name: 'Farid Fixture',
+    gender: 'Male',
+    parent_id: 'person-d',
+    spouse_name: 'Hina Fixture',
+    dob: '1975-06-30',
+    qualification: 'M.Sc.',
+    path: ['11111111-1111-4111-8111-111111111111'],
+  }),
+  person({
+    id: 'person-g',
+    full_name: 'Gul Fixture',
+    gender: 'Female',
+    parent_id: 'person-d',
+    dob: '1978-09-09',
+    name_ur: 'گل',
+    name_hi: 'गुल',
+    path: ['11111111-1111-4111-8111-111111111111'],
+  }),
+  person({
+    id: 'person-h',
+    full_name: 'Hamza Fixture',
+    gender: 'Male',
+    parent_id: 'person-f',
+    dob: '2005-04-01',
+    path: ['11111111-1111-4111-8111-111111111111'],
+  }),
+  person({
+    id: 'person-i',
+    full_name: 'Inaya Fixture',
+    gender: 'Female',
+    parent_id: 'person-f',
+    dob: '2008-12-25',
+    path: ['11111111-1111-4111-8111-111111111111'],
+  }),
+  // Second root: a separate branch, so the layout has several root groups.
+  person({
+    id: 'person-l',
+    full_name: 'Laila Fixture',
+    gender: 'Female',
+    dob: '1900-01-01',
+  }),
+  person({
+    id: 'person-m',
+    full_name: 'Mariam Fixture',
+    gender: 'Female',
+    parent_id: 'person-l',
+    spouse_name: 'Iqbal Fixture',
+    dob: '1930-04-04',
+    dod: '1999-12-31',
+  }),
+  person({
+    id: 'person-n',
+    full_name: 'Naveed Fixture',
+    gender: 'Male',
+    parent_id: 'person-l',
+    dob: '1935-07-07',
+    dod: '2015-03-03',
+  }),
+];
+
+const AUDIT_LOG = [
+  {
+    id: 1,
+    person_id: 'person-a',
+    changed_by_name: 'Family Admin',
+    changed_at: '2026-01-02T10:00:00.000Z',
+  },
 ];
 
 /* ------------------------------- helpers -------------------------------- */
@@ -81,6 +279,9 @@ const USERS = [
 let tokenSeq = 0;
 const accessTokens = new Map(); // access token -> user id
 const refreshTokens = new Map(); // refresh token -> user id
+
+/** Fault injection: the next N people reads for one account answer 500. */
+const failPeopleFor = new Map(); // email -> remaining failures
 
 function findUserByEmail(email) {
   const normalized = String(email ?? '').toLowerCase();
@@ -183,6 +384,42 @@ function readJson(req) {
       }
     });
   });
+}
+
+/**
+ * PostgREST `order=col.asc.nullsfirst,…` — enough for the columns the app
+ * sorts by (ISO date strings and ids compare as strings).
+ */
+function sortRows(rows, orderParam) {
+  const terms = String(orderParam ?? '')
+    .split(',')
+    .map((term) => term.trim())
+    .filter(Boolean)
+    .map((term) => {
+      const [col, dir, nulls] = term.split('.');
+      return { col, dir: dir === 'desc' ? -1 : 1, nullsFirst: nulls === 'nullsfirst' };
+    });
+  if (!terms.length) return rows;
+  return rows.slice().sort((a, b) => {
+    for (const { col, dir, nullsFirst } of terms) {
+      const av = a[col];
+      const bv = b[col];
+      if (av == null && bv == null) continue;
+      if (av == null) return nullsFirst ? -1 : 1;
+      if (bv == null) return nullsFirst ? 1 : -1;
+      if (av < bv) return -dir;
+      if (av > bv) return dir;
+    }
+    return 0;
+  });
+}
+
+/** `Range: 0-999` → inclusive slice bounds, clamped to the row count. */
+function rangeFrom(req, total) {
+  const match = /^(\d+)-(\d*)$/.exec(String(req.headers.range ?? ''));
+  const from = match ? Number(match[1]) : 0;
+  const to = match && match[2] !== '' ? Number(match[2]) : total - 1;
+  return [Math.min(from, Math.max(0, total - 1)), Math.min(to, total - 1)];
 }
 
 function bearerUserId(req) {
@@ -317,6 +554,42 @@ async function handleRest(req, res, url) {
     return sendJson(req, res, 200, rows);
   }
 
+  if (table === 'people' && req.method === 'GET') {
+    // RLS: only active profiles may read; soft-deleted rows are admin-only.
+    if (!user || !user.profile || !user.profile.active) {
+      return restError(req, res, 403, '42501', 'permission denied for table people');
+    }
+    if ((failPeopleFor.get(user.email) ?? 0) > 0) {
+      failPeopleFor.set(user.email, failPeopleFor.get(user.email) - 1);
+      return restError(req, res, 500, 'MOCK500', 'mock load failure');
+    }
+    const admin = user.profile.role === 'admin';
+    const deletedFilter = queryValue('is_deleted');
+    let rows = PEOPLE.filter((row) => admin || !row.is_deleted);
+    if (deletedFilter === 'false') rows = rows.filter((row) => !row.is_deleted);
+    if (deletedFilter === 'true') rows = rows.filter((row) => row.is_deleted);
+    rows = sortRows(rows, url.searchParams.get('order'));
+    const total = rows.length;
+    const [from, to] = rangeFrom(req, total);
+    const page = total ? rows.slice(from, to + 1) : [];
+    cors(req, res);
+    res.setHeader('Content-Range', `${total ? from : 0}-${total ? to : 0}/${total}`);
+    return sendJson(req, res, 200, page);
+  }
+
+  if (table === 'audit_log' && req.method === 'GET') {
+    // RLS: the audit log is admin-readable only.
+    if (!user || !user.profile || user.profile.role !== 'admin') {
+      return restError(req, res, 403, '42501', 'permission denied for table audit_log');
+    }
+    const personId = queryValue('person_id');
+    let rows = AUDIT_LOG.filter((row) => !personId || row.person_id === personId);
+    rows = sortRows(rows, url.searchParams.get('order'));
+    const limitRaw = url.searchParams.get('limit');
+    if (limitRaw) rows = rows.slice(0, Number(limitRaw));
+    return sendJson(req, res, 200, rows);
+  }
+
   return restError(req, res, 404, 'PGRST404', `No mock table: ${table}`);
 }
 
@@ -346,6 +619,18 @@ async function handleMock(req, res, url) {
       profile: user.profile ? { id: user.id, email: user.email, ...user.profile } : null,
       branchAccess: user.branchAccess,
     });
+  }
+
+  // Make the next N people reads for one account fail — the load-error banner
+  // needs a real 500, scoped to a dedicated fixture account so parallel tests
+  // can never consume the failure.
+  if (req.method === 'POST' && path === '/__mock/fail-people') {
+    const body = await readJson(req);
+    const email = String(body.email ?? '');
+    if (!findUserByEmail(email)) return sendJson(req, res, 404, { error: `Unknown fixture: ${email}` });
+    const times = Number(body.times ?? 1);
+    failPeopleFor.set(email, times);
+    return sendJson(req, res, 200, { email, failing: times });
   }
 
   return sendJson(req, res, 404, { error: `No mock route: ${req.method} ${path}` });

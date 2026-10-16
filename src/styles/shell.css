@@ -98,13 +98,17 @@
 }
 
 /* The tree canvas keeps an LTR coordinate system in every language; the
-   surrounding chrome flips with the document direction. */
+   surrounding chrome flips with the document direction. The workspace fills
+   the whole host. */
 .view-host {
   flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-6) var(--space-4);
+  min-height: 0;
+}
+
+.view-host > * {
+  flex: 1;
+  min-width: 0;
 }
 
 /* ---- Small screens ------------------------------------------------------- */

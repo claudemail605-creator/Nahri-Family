@@ -3,6 +3,7 @@ import './styles/base.css';
 import './styles/components.css';
 import './styles/shell.css';
 import './styles/features.css';
+import './styles/tree.css';
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { mountApp } from './app';
