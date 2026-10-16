@@ -116,11 +116,11 @@ test that exercised it.
 
 | # | Feature | Reference behaviour (source) | Status |
 | --- | --- | --- | --- |
-| J1 | English / Urdu / Hindi, 617 keys each, English fallback | `js/i18n.js` | planned |
-| J2 | Localized displayed names (ur/hi with English fallback) | `dispName()` | planned |
-| J3 | RTL layout for Urdu; tree canvas stays LTR | `dir=rtl`, logical CSS | planned |
-| J4 | Lazy per-language fonts (Naskh/Nastaliq/Devanagari) | `loadFonts()` | planned |
-| J5 | Language persisted in profile + localStorage; re-render on change | `setLanguage()` + `i18n:change` | planned |
+| J1 | English / Urdu / Hindi, 617 keys each, English fallback | `js/i18n.js` | **done** (Phase 1 — engine + generated dictionaries, parity tests in `tests/unit/dicts.test.ts`, `i18n.test.ts`; views consume `t()` as they land) |
+| J2 | Localized displayed names (ur/hi with English fallback) | `dispName()` | **done** (Phase 1 — shared `getDisplayName()` in `src/core/i18n/display.ts`, tested) |
+| J3 | RTL layout for Urdu; tree canvas stays LTR | `dir=rtl`, logical CSS | **in progress** (Phase 1 — document direction flip and LTR canvas host verified in E2E; the real canvas arrives in Phase 3) |
+| J4 | Lazy per-language fonts (Naskh/Nastaliq/Devanagari) | `loadFonts()` | **done** (Phase 1 — on-demand stylesheet loading, tested) |
+| J5 | Language persisted in profile + localStorage; re-render on change | `setLanguage()` + `i18n:change` | **in progress** (Phase 1 — localStorage persistence + `i18n:change` re-render hook done and tested; profile-language sync lands with auth in Phase 2) |
 
 ## Branch workspace (guided completion)
 
@@ -146,13 +146,13 @@ test that exercised it.
 
 | # | Feature | Reference behaviour (source) | Status |
 | --- | --- | --- | --- |
-| M1 | Light/dark theme, remembered | `ft-theme` localStorage | planned |
+| M1 | Light/dark theme, remembered | `ft-theme` localStorage | **done** (Phase 1 — pre-paint resolution, saved choice beats OS, persistence; unit + E2E tests) |
 | M2 | Installable PWA, offline app shell, Supabase/CDN never cached | `sw.js`, manifest | planned |
 | M3 | Realtime updates (people channel) + 60 s poll fallback | `startLiveUpdates()` | planned |
 | M4 | Manual refresh keeping selection | `syncFromServer()` | planned |
 | M5 | Mobile filter drawer, 360 px usable | drawer | planned |
-| M6 | Accessibility: focus rings, keyboard, aria labels, reduced motion | partly present | planned |
-| M7 | Toast + empty + loading + error states everywhere | yes | planned |
+| M6 | Accessibility: focus rings, keyboard, aria labels, reduced motion | partly present | **in progress** (Phase 1 — focus-visible rings, modal focus trap + restore, labelled controls, reduced-motion CSS, keyboard E2E check; per-view work continues) |
+| M7 | Toast + empty + loading + error states everywhere | yes | **in progress** (Phase 1 — toast host + boot/loading state; view-level empty/error states land with the views) |
 
 ## Deliberately not carried over
 

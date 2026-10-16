@@ -17,5 +17,7 @@ existing Supabase project — nothing is bundled into the website.
 
 ## Status
 
-Phase 0 (inspection and baseline) is complete. Implementation follows the
-phases in `docs/PLAN.md`.
+Phase 0 (inspection and baseline) and Phase 1 (foundation: app shell, design
+system, i18n engine, theme, test harness) are complete. Implementation follows
+the phases in `docs/PLAN.md`; every phase's evidence lands in
+`docs/TESTING.md`.

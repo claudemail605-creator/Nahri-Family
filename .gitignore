@@ -15,6 +15,7 @@ playwright-report/
 test-results/
 blob-report/
 .fake-backend-state.json
+screenshots/
 
 # Editor and OS noise
 .vscode/

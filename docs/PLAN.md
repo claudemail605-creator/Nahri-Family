@@ -169,7 +169,7 @@ test:e2e` (all specs), re-run scanners (`tools/scan-*.cjs`), update
 | Phase | Deliverable | Gate (real commands) |
 | --- | --- | --- |
 | **0. Baseline** (done) | `docs/BASELINE.md`, this plan, full inventory | reference scans run; results recorded |
-| **1. Foundation** | Vite+TS scaffold, tokens + base styles, shell (header/rail/mobile tab bar/drawers), i18n engine + dictionaries (extracted), theme, toasts/modals, test harness (vitest + playwright + mock backend), CI-style scripts | typecheck, unit (i18n parity, dom helpers), build, first E2E boot smoke, **first push verified** |
+| **1. Foundation** (done) | Vite+TS scaffold, tokens + base styles, shell (header/theme/language), i18n engine + dictionaries (extracted), theme, toasts/modals, test harness (vitest + playwright) | typecheck clean; 43 unit tests; build; 10 E2E tests (desktop+mobile); first push verified |
 | **2. Auth & access** | Supabase client, auth gate flows (sign-in/forgot/set-password/inactive/profile), session store, permission helpers | E2E: sign-in success/failure, invite link, inactive, sign-out wipe; unit: error mapping |
 | **3. Tree & profiles** | model build, layout, renderer, PanZoomController, selection, tooltips, profile sheet, search, filters, focus | unit: layout/panzoom/model/names; E2E: select person & spouse card, pan/pinch/tap (touch emulation), filters, zoom buttons, fit, RTL tree |
 | **4. Editing & branch** | person form (add/edit/child/root), validation, duplicate warning, photos upload/remove/lightbox, deletion requests, soft delete/restore, history + restore version, branch workspace (guided completion, multi-branch) | E2E: add/edit person persists via mock, validation errors, photo flow, request→approve, restore version, branch workspace progress + save round-trip |
@@ -214,19 +214,22 @@ data is committed.
   them; real enforcement remains in Postgres and is exercised live only where
   authorised.
 
-## 9. Open questions for the owner
+## 9. Owner answers (recorded)
 
-1. **Live testing access** — provide a test account (which role?) or a staging
-   Supabase project? Without one, authenticated flows are verified against the
-   mock + documentation, not the live database.
-2. **Spouse model** — keep the current text-based spouse (recommended for
-   parity: spouse cards show spouse details, no person record) or plan a
-   schema migration to linked spouse records (needs their authorisation to
-   run SQL, and careful data decisions)?
-3. **Brand copy** — proposed app name "Nahri Family Archive" (en) with
-   `نہری خاندان` / `नहरी परिवार`; the owner may prefer simply "Nahri Family".
-   All Urdu/Hindi copy is marked for native-speaker review, as in the
-   reference.
+1. **Live testing access** — the owner will provide a test account. Live
+   authenticated specs run when the credentials arrive; **any write against the
+   live project needs a separate explicit OK**. Until then, authenticated flows
+   are verified against the mock and documented as such.
+2. **Spouse model** — **keep the text-based spouse** (`spouse_name`,
+   `spouse_father_name`); no linked-record migration. The spouse-focused view
+   shows the available spouse fields and links to the partner's profile.
+3. **Brand copy** — app name is **"Nahri Family"** (owner decision). Urdu
+   (`نہری فیملی`) and Hindi (`नहरी फैमिली`) spellings are implemented in the
+   header brand and remain flagged for native-speaker review.
+
+Implemented layout note (Phase 1): UI primitives live in `src/ui/`, the shell
+in `src/shell/`, config in `src/core/config.ts`; the rest of the tree follows
+the layout above as phases land.
 
 ## 10. Risks and mitigations
 

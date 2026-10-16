@@ -1,0 +1,166 @@
+/* ============================================================================
+   Nahri Family — design tokens ("Ink & Copper Archive")
+   ----------------------------------------------------------------------------
+   Light is the base palette; [data-theme="dark"] overrides the semantic layer.
+   index.html resolves the theme before first paint (saved choice wins, then the
+   OS preference) so there is no flash of the wrong palette.
+   ========================================================================= */
+
+:root {
+  color-scheme: light;
+
+  /* -- Typography --------------------------------------------------------- */
+  --font-display: 'Newsreader', 'Noto Naskh Arabic', 'Noto Sans Devanagari', Georgia,
+    'Times New Roman', serif;
+  --font-ui: 'Public Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-urdu-name: 'Noto Nastaliq Urdu', 'Noto Naskh Arabic', serif;
+  --font-hindi: 'Noto Sans Devanagari', 'Public Sans', sans-serif;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  /* -- Ink (indigo) ------------------------------------------------------- */
+  --ink-50: #f4f6fb;
+  --ink-100: #e7eaf4;
+  --ink-200: #ccd3e7;
+  --ink-300: #a6b0d1;
+  --ink-400: #7c88b0;
+  --ink-500: #5b688f;
+  --ink-600: #475374;
+  --ink-700: #38425e;
+  --ink-800: #2b3a5c;
+  --ink-900: #1e2a47;
+  --ink-950: #141c33;
+
+  /* -- Copper accent ------------------------------------------------------ */
+  --copper-50: #fbeee6;
+  --copper-100: #f4ddcf;
+  --copper-200: #e8c3ab;
+  --copper-300: #d69f7c;
+  --copper-400: #c07c52;
+  --copper-500: #a8623a;
+  --copper-600: #8d4f2e;
+  --copper-700: #703e24;
+
+  /* -- Ivory neutrals ----------------------------------------------------- */
+  --ivory-50: #fdfcf8;
+  --ivory-100: #faf7f0;
+  --ivory-200: #f3eee3;
+  --ivory-300: #e9e1d0;
+  --ivory-400: #d8cdb6;
+
+  /* -- Semantic: light ---------------------------------------------------- */
+  --bg: var(--ivory-100);
+  --bg-elevated: var(--ivory-50);
+  --surface: #ffffff;
+  --surface-2: var(--ivory-200);
+  --surface-3: var(--ivory-300);
+  --border: #ded6c5;
+  --border-strong: #c8bda3;
+  --text: #272d3d;
+  --text-muted: #5d6678;
+  --text-faint: #8891a1;
+  --primary: var(--ink-800);
+  --primary-strong: var(--ink-900);
+  --on-primary: #f8f6f0;
+  --accent: var(--copper-500);
+  --accent-strong: var(--copper-600);
+  --accent-soft: var(--copper-100);
+  --on-accent: #fff8f2;
+  --focus-ring: var(--copper-500);
+  --success: #3d7a50;
+  --success-soft: #e3efe3;
+  --success-text: #2c5c3b;
+  --warning: #9a6a14;
+  --warning-soft: #f7edd3;
+  --warning-text: #74500f;
+  --danger: #ac422b;
+  --danger-soft: #f8e3dc;
+  --danger-text: #7f2f1e;
+  --info: #40527c;
+  --info-soft: #e7ebf5;
+  --info-text: #34415f;
+
+  --shadow-1: 0 1px 2px rgb(30 42 71 / 0.08), 0 1px 3px rgb(30 42 71 / 0.06);
+  --shadow-2: 0 2px 6px rgb(30 42 71 / 0.1), 0 6px 18px rgb(30 42 71 / 0.08);
+  --shadow-3: 0 6px 16px rgb(30 42 71 / 0.14), 0 16px 40px rgb(30 42 71 / 0.12);
+
+  /* -- Space & shape ------------------------------------------------------ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  --control-height: 40px;
+  --touch-target: 44px; /* minimum interactive size on touch screens */
+
+  /* -- Layers & motion ---------------------------------------------------- */
+  --z-header: 40;
+  --z-drawer: 60;
+  --z-modal: 80;
+  --z-toast: 100;
+
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.45, 0, 0.25, 1);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #131828;
+  --bg-elevated: #171d30;
+  --surface: #1c2338;
+  --surface-2: #232b45;
+  --surface-3: #2c3554;
+  --border: #333d5e;
+  --border-strong: #4a5680;
+  --text: #eae7de;
+  --text-muted: #a9b1c4;
+  --text-faint: #7e879d;
+  --primary: #8fa0cf;
+  --primary-strong: #aab8dd;
+  --on-primary: #10152a;
+  --accent: #c07c52;
+  --accent-strong: #d08e60;
+  --accent-soft: #3a2a20;
+  --on-accent: #1a1109;
+  --focus-ring: #d08e60;
+  --success: #6fae80;
+  --success-soft: #1d2f25;
+  --success-text: #a5d4b0;
+  --warning: #d2a34d;
+  --warning-soft: #33290f;
+  --warning-text: #e7c37a;
+  --danger: #d97b61;
+  --danger-soft: #38201a;
+  --danger-text: #eaa28c;
+  --info: #93a4d3;
+  --info-soft: #202944;
+  --info-text: #b9c6e8;
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.35), 0 1px 3px rgb(0 0 0 / 0.28);
+  --shadow-2: 0 2px 6px rgb(0 0 0 / 0.38), 0 8px 22px rgb(0 0 0 / 0.3);
+  --shadow-3: 0 8px 20px rgb(0 0 0 / 0.45), 0 20px 48px rgb(0 0 0 / 0.38);
+}
