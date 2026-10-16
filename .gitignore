@@ -1,0 +1,31 @@
+# Dependencies and build output
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Environment files — never commit real values, keep the example
+.env
+.env.*
+!.env.example
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+blob-report/
+.fake-backend-state.json
+
+# Editor and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Deployment caches
+.vercel
+.netlify
+
+# Logs
+*.log
+npm-debug.log*
