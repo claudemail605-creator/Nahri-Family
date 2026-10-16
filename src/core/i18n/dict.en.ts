@@ -1,6 +1,6 @@
 /**
  * GENERATED FILE — do not edit by hand.
- * Extracted from the reference application's js/i18n.js (617 messages per language).
+ * Extracted from the reference application's js/i18n.js (619 messages per language).
  * Regenerate with: npm run extract:i18n
  */
 export const en = {
@@ -620,5 +620,7 @@ export const en = {
   "admin.branchSignIn": "Sign-in",
   "admin.statusSignedIn": "signed in",
   "admin.statusNotSignedIn": "invitation not used yet",
-  "admin.statusActive": "active"
+  "admin.statusActive": "active",
+  "generic.close": "Close",
+  "profile.edit": "Edit profile"
 } as const;

@@ -8,6 +8,8 @@ dist-ssr/
 .env
 .env.*
 !.env.example
+# The E2E mode file is fake by design (mock server URLs only) and is committed.
+!.env.e2e
 
 # Test output
 coverage/

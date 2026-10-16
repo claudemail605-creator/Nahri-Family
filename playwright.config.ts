@@ -14,12 +14,20 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
-  webServer: {
-    command: 'npm run e2e:server',
-    url: 'http://localhost:4173',
-    reuseExistingServer: true,
-    timeout: 180_000,
-  },
+  webServer: [
+    {
+      command: 'node tests/mock/supabase-server.mjs',
+      url: 'http://127.0.0.1:54321/__mock/health',
+      reuseExistingServer: true,
+      timeout: 30_000,
+    },
+    {
+      command: 'npm run e2e:server',
+      url: 'http://localhost:4173',
+      reuseExistingServer: true,
+      timeout: 180_000,
+    },
+  ],
   projects: [
     { name: 'desktop-chrome', use: { ...devices['Desktop Chrome'] } },
     { name: 'mobile-chrome', use: { ...devices['Pixel 7'] } },

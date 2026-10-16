@@ -3,14 +3,17 @@ import { h } from './dom';
 /**
  * Modal dialog infrastructure: one dialog at a time, focus moved inside on
  * open and restored on close, Escape/backdrop dismissal (when dismissible),
- * and a Tab focus trap. Written against the DOM only so jsdom can unit-test
- * the behaviour.
+ * and a Tab focus trap. Escape is captured at the document level so it works
+ * even when focus has left the dialog (e.g. a disabled action button moves
+ * focus to the body while a save is in flight). Written against the DOM only
+ * so jsdom can unit-test the behaviour.
  */
 
 export interface ModalAction {
   label: string;
   kind?: 'primary' | 'accent' | 'ghost' | 'danger';
-  onClick: (close: () => void) => void;
+  /** `button` is the action's own button, so callers can toggle a busy state. */
+  onClick: (close: () => void, button: HTMLButtonElement) => void;
 }
 
 export interface OpenModalOptions {
@@ -52,9 +55,16 @@ export function openModal(options: OpenModalOptions, doc: Document = document): 
     if (closed) return;
     closed = true;
     if (activeModal === handle) activeModal = null;
+    doc.removeEventListener('keydown', onKeydown);
     root.remove();
     if (previouslyFocused && previouslyFocused.isConnected) previouslyFocused.focus();
     options.onClose?.();
+  }
+
+  function onKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape' || !dismissible) return;
+    event.preventDefault();
+    close();
   }
 
   const closeButton = h('button', {
@@ -75,17 +85,15 @@ export function openModal(options: OpenModalOptions, doc: Document = document): 
     ? h(
         'div',
         { class: 'modal__actions' },
-        ...options.actions.map((action) =>
-          h(
+        ...options.actions.map((action) => {
+          const button = h(
             'button',
-            {
-              type: 'button',
-              class: `btn btn--${action.kind ?? 'ghost'}`,
-              onclick: () => action.onClick(close),
-            },
+            { type: 'button', class: `btn btn--${action.kind ?? 'ghost'}` },
             action.label,
-          ),
-        ),
+          );
+          button.addEventListener('click', () => action.onClick(close, button));
+          return button;
+        }),
       )
     : null;
 
@@ -115,11 +123,6 @@ export function openModal(options: OpenModalOptions, doc: Document = document): 
   });
 
   dialog.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && dismissible) {
-      event.preventDefault();
-      close();
-      return;
-    }
     if (event.key !== 'Tab') return;
     const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE));
     if (focusables.length === 0) {
@@ -141,6 +144,7 @@ export function openModal(options: OpenModalOptions, doc: Document = document): 
 
   doc.body.appendChild(root);
   dialog.focus();
+  doc.addEventListener('keydown', onKeydown);
 
   const handle: ModalHandle = { close, root, dialog };
   activeModal = handle;

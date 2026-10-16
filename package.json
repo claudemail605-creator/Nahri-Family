@@ -16,7 +16,7 @@
     "test:watch": "vitest",
     "e2e": "playwright test",
     "test:e2e": "playwright test",
-    "e2e:server": "vite build && vite preview --port 4173 --strictPort",
+    "e2e:server": "vite build --mode e2e && vite preview --port 4173 --strictPort",
     "check": "npm run typecheck && npm run test && npm run build",
     "extract:i18n": "node scripts/extract-i18n.mjs"
   },
@@ -27,5 +27,8 @@
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.118.0"
   }
 }

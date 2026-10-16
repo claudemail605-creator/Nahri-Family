@@ -1,12 +1,14 @@
 import type { Lang } from '../core/types';
 import { h, svgIcon } from '../ui/dom';
 
-/** The sticky app header: brand, language switcher, theme toggle. */
+/** The sticky app header: brand, language switcher, theme toggle, account. */
 
 export interface HeaderRefs {
   element: HTMLElement;
   langSelect: HTMLSelectElement;
   themeButton: HTMLButtonElement;
+  /** Filled by the shell when a profile is signed in (avatar chip). */
+  accountArea: HTMLElement;
 }
 
 /* An arch-and-spine mark in the copper accent — the archive motif. */
@@ -49,6 +51,8 @@ export function buildHeader(): HeaderRefs {
     svgIcon(ICON_SUN),
   );
 
+  const accountArea = h('div', { class: 'account-area', id: 'account-area' });
+
   const element = h(
     'header',
     { class: 'app-header' },
@@ -63,8 +67,9 @@ export function buildHeader(): HeaderRefs {
       { class: 'app-header__actions' },
       h('div', { class: 'lang-field' }, langLabel, langSelect),
       themeButton,
+      accountArea,
     ),
   );
 
-  return { element, langSelect, themeButton };
+  return { element, langSelect, themeButton, accountArea };
 }

@@ -43,6 +43,15 @@ describe('openModal', () => {
     expect(document.querySelector('.modal-backdrop')).toBeNull();
   });
 
+  it('closes on Escape even when focus has left the dialog', () => {
+    const handle = openModal({ title: 'T', content: 'C' });
+    // A disabled action button (save in flight) drops focus to the body; the
+    // dialog must still dismiss.
+    (document.activeElement as HTMLElement | null)?.blur();
+    press(document.body, 'Escape');
+    expect(handle.root.isConnected).toBe(false);
+  });
+
   it('ignores Escape and hides the close button when not dismissible', () => {
     const handle = openModal({ title: 'T', content: 'C', dismissible: false });
     expect(handle.dialog.querySelector('.modal__close')).toBeNull();

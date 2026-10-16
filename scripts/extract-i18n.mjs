@@ -25,7 +25,7 @@ const SOURCE = process.argv[2]
   : resolve(HERE, '..', '..', 'reference', 'js', 'i18n.js');
 const OUT_DIR = resolve(HERE, '..', 'src', 'core', 'i18n');
 const LANGS = ['en', 'ur', 'hi'];
-const EXPECTED_KEY_COUNT = 617;
+const EXPECTED_KEY_COUNT = 619;
 
 function extractObjectLiteral(text, declaration) {
   const declAt = text.indexOf(declaration);
@@ -105,6 +105,21 @@ const RENAMES = {
     hi: 'नहरी फैमिली',
   },
 };
+
+// Messages the new app adds that the reference dictionaries do not have.
+// The Urdu and Hindi spellings await native-speaker review (see docs/PLAN.md).
+const NEW_KEYS = {
+  'generic.close': {
+    en: 'Close',
+    ur: 'بند کریں',
+    hi: 'बंद करें',
+  },
+  'profile.edit': {
+    en: 'Edit profile',
+    ur: 'پروفائل میں ترمیم کریں',
+    hi: 'प्रोफ़ाइल संपादित करें',
+  },
+};
 if (literal.includes('`')) {
   console.warn('WARN: dictionary literal contains a backtick — verify the vm evaluation is faithful');
 }
@@ -116,6 +131,14 @@ for (const [key, perLang] of Object.entries(RENAMES)) {
     I18N[lang][key] = perLang[lang];
   }
   console.log(`renamed ${key}`);
+}
+
+for (const [key, perLang] of Object.entries(NEW_KEYS)) {
+  for (const lang of LANGS) {
+    if (key in I18N[lang]) fail(`new key "${key}" already exists in ${lang} — remove it from NEW_KEYS`);
+    I18N[lang][key] = perLang[lang];
+  }
+  console.log(`added ${key}`);
 }
 
 for (const lang of LANGS) {

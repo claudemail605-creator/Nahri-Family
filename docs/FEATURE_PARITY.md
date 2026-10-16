@@ -11,21 +11,21 @@ test that exercised it.
 
 | # | Feature | Reference behaviour (source) | Status |
 | --- | --- | --- | --- |
-| A1 | Sign in (email + password) | Gate blocks the app; friendly errors; show/hide password (`js/auth.js`) | planned |
-| A2 | Forgot password → reset email | `resetPasswordForEmail` with redirect back to the app (`js/auth.js`) | planned |
-| A3 | Invitation / recovery link → set password | `type=invite\|recovery` detected before supabase-js strips the URL; expired link message (`js/supabase.js`, `js/auth.js`) | planned |
-| A4 | Sign out clears all data | `clearTree()` wipes model, panel, table, channel, photo cache (`js/app.js`) | planned |
-| A5 | Inactive account handling | Profile with `active=false` → signed out with explanation; invite links exempt until password set (`js/auth.js`) | planned |
-| A6 | Own profile edit | Full name + language saved to `profiles` (`js/auth.js`) | planned |
-| A7 | No public sign-up | Supabase `disable_signup: true`, verified live in Phase 0 | n/a (config) |
+| A1 | Sign in (email + password) | Gate blocks the app; friendly errors; show/hide password (`js/auth.js`) | **done** (Phase 2 — E2E success/failure/empty fields/retry, unit error mapping + controller lifecycle) |
+| A2 | Forgot password → reset email | `resetPasswordForEmail` with redirect back to the app (`js/auth.js`) | **done** (Phase 2 — E2E: request confirmed, back to sign-in; the mock accepts `recover` and sends no mail, so real delivery is untested) |
+| A3 | Invitation / recovery link → set password | `type=invite\|recovery` detected before supabase-js strips the URL; expired link message (`js/supabase.js`, `js/auth.js`) | **done** (Phase 2 — E2E invite-link flow + expired-link notice; unit: `PASSWORD_RECOVERY` event, URL strip, sentinels; the recovery e-mail round-trip itself is untested) |
+| A4 | Sign out clears all data | `clearTree()` wipes model, panel, table, channel, photo cache (`js/app.js`) | **in progress** (Phase 2 — session, profile and chip cleared; reload stays signed out (E2E). The tree/panel/photo caches it must also wipe arrive with those views in Phases 3–4) |
+| A5 | Inactive account handling | Profile with `active=false` → signed out with explanation; invite links exempt until password set (`js/auth.js`) | **done** (Phase 2 — E2E: inactive + missing profile → quiet sign-out with notice, workspace hidden, survives reload; inactive invitee gets the notice after setting a password) |
+| A6 | Own profile edit | Full name + language saved to `profiles` (`js/auth.js`) | **done** (Phase 2 — E2E: name + language persist, interface flips RTL, both survive reload) |
+| A7 | No public sign-up | Supabase `disable_signup: true`, verified live in Phase 0 | n/a (config — re-checked in Phase 2: the gate offers no sign-up path) |
 
 ## Roles and permissions
 
 | # | Feature | Reference behaviour (source) | Status |
 | --- | --- | --- | --- |
-| B1 | Admin role | Everything, incl. accounts, import, restore (`01_schema.sql`, UI in `js/admin.js`) | planned |
-| B2 | Editor role, branch-limited | `branch_access` anchors; edit = anchor + descendants; mirrors DB `can_edit_person()` in UI (`js/auth.js`) | planned |
-| B3 | DB-enforced, not UI-only | All rules in RLS + triggers; UI only hides buttons | planned |
+| B1 | Admin role | Everything, incl. accounts, import, restore (`01_schema.sql`, UI in `js/admin.js`) | **in progress** (Phase 2 — role parsed from the profile, admin tag in the chip, admin-only copy in the profile dialog; the admin panel arrives in Phase 5) |
+| B2 | Editor role, branch-limited | `branch_access` anchors; edit = anchor + descendants; mirrors DB `can_edit_person()` in UI (`js/auth.js`) | **in progress** (Phase 2 — `branch_access` loaded for editors, `canEditPerson()` mirrors the DB rule (unit-tested); the tree views that consume it arrive in Phase 3) |
+| B3 | DB-enforced, not UI-only | All rules in RLS + triggers; UI only hides buttons | **in progress** (Phase 2 — the mock re-implements the RLS refusals the UI must handle; live enforcement is re-exercised in Phase 7) |
 
 ## Tree
 
@@ -118,9 +118,9 @@ test that exercised it.
 | --- | --- | --- | --- |
 | J1 | English / Urdu / Hindi, 617 keys each, English fallback | `js/i18n.js` | **done** (Phase 1 — engine + generated dictionaries, parity tests in `tests/unit/dicts.test.ts`, `i18n.test.ts`; views consume `t()` as they land) |
 | J2 | Localized displayed names (ur/hi with English fallback) | `dispName()` | **done** (Phase 1 — shared `getDisplayName()` in `src/core/i18n/display.ts`, tested) |
-| J3 | RTL layout for Urdu; tree canvas stays LTR | `dir=rtl`, logical CSS | **in progress** (Phase 1 — document direction flip and LTR canvas host verified in E2E; the real canvas arrives in Phase 3) |
+| J3 | RTL layout for Urdu; tree canvas stays LTR | `dir=rtl`, logical CSS | **in progress** (Phases 1–2 — document flip; the sign-in gate and profile views render RTL (E2E + screenshots); the canvas host stays LTR; the real canvas arrives in Phase 3) |
 | J4 | Lazy per-language fonts (Naskh/Nastaliq/Devanagari) | `loadFonts()` | **done** (Phase 1 — on-demand stylesheet loading, tested) |
-| J5 | Language persisted in profile + localStorage; re-render on change | `setLanguage()` + `i18n:change` | **in progress** (Phase 1 — localStorage persistence + `i18n:change` re-render hook done and tested; profile-language sync lands with auth in Phase 2) |
+| J5 | Language persisted in profile + localStorage; re-render on change | `setLanguage()` + `i18n:change` | **done** (Phases 1–2 — localStorage persistence + `i18n:change` re-render hook; a signed-in header choice is written to `profiles`, and the saved profile language wins at boot; E2E both directions) |
 
 ## Branch workspace (guided completion)
 
@@ -151,8 +151,8 @@ test that exercised it.
 | M3 | Realtime updates (people channel) + 60 s poll fallback | `startLiveUpdates()` | planned |
 | M4 | Manual refresh keeping selection | `syncFromServer()` | planned |
 | M5 | Mobile filter drawer, 360 px usable | drawer | planned |
-| M6 | Accessibility: focus rings, keyboard, aria labels, reduced motion | partly present | **in progress** (Phase 1 — focus-visible rings, modal focus trap + restore, labelled controls, reduced-motion CSS, keyboard E2E check; per-view work continues) |
-| M7 | Toast + empty + loading + error states everywhere | yes | **in progress** (Phase 1 — toast host + boot/loading state; view-level empty/error states land with the views) |
+| M6 | Accessibility: focus rings, keyboard, aria labels, reduced motion | partly present | **in progress** (Phases 1–2 — focus-visible rings, modal focus trap + restore, Escape dismissal wherever focus sits, auto-focused gate field, full keyboard chain through the gate (E2E), labelled controls, reduced-motion CSS; per-view work continues) |
+| M7 | Toast + empty + loading + error states everywhere | yes | **in progress** (Phases 1–2 — toast host; gate loading/verifying/unavailable with a working retry; inline form messages; view-level states land with the views) |
 
 ## Deliberately not carried over
 

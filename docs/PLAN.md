@@ -162,7 +162,7 @@ signed URL with cache for the panel.
 
 ## 6. Phases and test gates
 
-After **every** phase: `npm run check` (typecheck + lint + unit), `npm run
+After **every** phase: `npm run check` (typecheck + unit + build), `npm run
 test:e2e` (all specs), re-run scanners (`tools/scan-*.cjs`), update
 `docs/FEATURE_PARITY.md` + `docs/TESTING.md`, fix regressions before moving on.
 
@@ -170,7 +170,7 @@ test:e2e` (all specs), re-run scanners (`tools/scan-*.cjs`), update
 | --- | --- | --- |
 | **0. Baseline** (done) | `docs/BASELINE.md`, this plan, full inventory | reference scans run; results recorded |
 | **1. Foundation** (done) | Vite+TS scaffold, tokens + base styles, shell (header/theme/language), i18n engine + dictionaries (extracted), theme, toasts/modals, test harness (vitest + playwright) | typecheck clean; 43 unit tests; build; 10 E2E tests (desktop+mobile); first push verified |
-| **2. Auth & access** | Supabase client, auth gate flows (sign-in/forgot/set-password/inactive/profile), session store, permission helpers | E2E: sign-in success/failure, invite link, inactive, sign-out wipe; unit: error mapping |
+| **2. Auth & access** (done) | Supabase client, auth gate flows (sign-in/forgot/set-password/inactive/profile), session store, permission helpers | typecheck clean; 94 unit tests (11 files); build; 34 E2E tests (desktop + mobile) against the mock Supabase; live authenticated checks await the owner's test account |
 | **3. Tree & profiles** | model build, layout, renderer, PanZoomController, selection, tooltips, profile sheet, search, filters, focus | unit: layout/panzoom/model/names; E2E: select person & spouse card, pan/pinch/tap (touch emulation), filters, zoom buttons, fit, RTL tree |
 | **4. Editing & branch** | person form (add/edit/child/root), validation, duplicate warning, photos upload/remove/lightbox, deletion requests, soft delete/restore, history + restore version, branch workspace (guided completion, multi-branch) | E2E: add/edit person persists via mock, validation errors, photo flow, request→approve, restore version, branch workspace progress + save round-trip |
 | **5. Admin & tools** | table pagination, admin tabs (users/invite/requests/deleted/activity/branch progress/import/backup), Excel import+export, JSON backup, tools (related/upcoming/stats/print/PNG) | unit: kinship cases, upcoming filter, importer problems, isoDate cases; E2E: import preview problems, backup payload shape, tools outputs, permission-gated admin UI |
