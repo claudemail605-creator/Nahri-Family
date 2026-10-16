@@ -10,6 +10,7 @@ import {
   type Windowish,
 } from './features/auth/link';
 import { openProfileForm } from './features/profile/form';
+import { clearPhotoCache } from './features/tree/photo';
 import { buildTreeWorkspace, type TreeWorkspace } from './features/tree/view';
 import { renderAccountChip } from './shell/account';
 import { buildHeader } from './shell/header';
@@ -95,6 +96,7 @@ export function mountApp(root: HTMLElement, options: AppOptions = {}): AppInstan
 
   let renderedProfile: ProfileRow | null = null;
   let renderedAccount: { profile: ProfileRow | null; isAdmin: boolean } | null = null;
+  let renderedUserId: string | null = null;
   let workspace: TreeWorkspace | null = null;
 
   function renderWorkspace(_profile: ProfileRow): void {
@@ -106,7 +108,12 @@ export function mountApp(root: HTMLElement, options: AppOptions = {}): AppInstan
     const instance = buildTreeWorkspace({
       i18n,
       client: options.client,
-      isAdmin: auth.isAdmin(),
+      permissions: {
+        isAdmin: () => auth.isAdmin(),
+        isActiveEditor: () => auth.isActiveEditor(),
+        branchAccess: () => auth.getState().branchAccess,
+        canEditPerson: (personId, personPath) => auth.canEditPerson(personId, personPath),
+      },
       onSignOut: () => {
         void auth.signOut();
       },
@@ -123,6 +130,14 @@ export function mountApp(root: HTMLElement, options: AppOptions = {}): AppInstan
     root.dataset.auth = state.status;
     const ready = state.status === 'ready';
     const profile = ready ? state.profile : null;
+    const userId = ready ? (state.session?.user.id ?? null) : null;
+
+    // A different (or no) signed-in user must not inherit signed photo URLs —
+    // reference `clearTree()` includes the photo cache (A4 parity).
+    if (userId !== renderedUserId) {
+      renderedUserId = userId;
+      clearPhotoCache();
+    }
 
     if (
       !renderedAccount ||

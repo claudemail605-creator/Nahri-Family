@@ -19,3 +19,16 @@ export function canEditPerson(ctx: EditContext): boolean {
   const anchors = new Set(ctx.branchAccess);
   return ctx.personPath.some((id) => anchors.has(id));
 }
+
+/**
+ * Live permission view handed to the tree workspace — the `AuthController`
+ * satisfies it, so the workspace asks per call instead of snapshotting roles
+ * at build time (a role or branch change re-renders straight away).
+ */
+export interface WorkspacePermissions {
+  isAdmin(): boolean;
+  isActiveEditor(): boolean;
+  /** Anchor people assigned to the current editor (`branch_access`). */
+  branchAccess(): readonly string[];
+  canEditPerson(personId: string, personPath: readonly string[] | null | undefined): boolean;
+}

@@ -99,12 +99,25 @@ describe('openModal', () => {
     expect(handle.root.isConnected).toBe(false);
   });
 
-  it('keeps a single dialog open at a time', () => {
+  it('stacks dialogs: Escape closes only the top one and reveals the one below', () => {
     const first = openModal({ title: 'First', content: '1' });
     const second = openModal({ title: 'Second', content: '2' });
-    expect(first.root.isConnected).toBe(false);
+    expect(first.root.isConnected).toBe(true);
     expect(second.root.isConnected).toBe(true);
-    expect(document.querySelectorAll('.modal-backdrop')).toHaveLength(1);
+    expect(document.querySelectorAll('.modal-backdrop')).toHaveLength(2);
+    // The dialog below is inert while the top one is up.
+    expect(first.root.hasAttribute('inert')).toBe(true);
+
+    press(document.body, 'Escape');
+    expect(second.root.isConnected).toBe(false);
+    expect(first.root.isConnected).toBe(true);
+    expect(first.root.hasAttribute('inert')).toBe(false);
+    // Page scroll stays locked while a dialog is still open.
+    expect(document.documentElement.classList.contains('modal-open')).toBe(true);
+
+    press(document.body, 'Escape');
+    expect(first.root.isConnected).toBe(false);
+    expect(document.documentElement.classList.contains('modal-open')).toBe(false);
   });
 
   it('calls onClose exactly once', () => {
@@ -113,5 +126,54 @@ describe('openModal', () => {
     handle.close();
     handle.close();
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('renders an optional subtitle and extra dialog classes', () => {
+    const handle = openModal({
+      title: 'Add person',
+      subtitle: 'Names please',
+      content: 'C',
+      dialogClass: 'modal--wide person-modal',
+    });
+    expect(handle.dialog.querySelector('.modal__sub')!.textContent).toBe('Names please');
+    expect(handle.dialog.classList.contains('person-modal')).toBe(true);
+    expect(handle.dialog.classList.contains('modal--wide')).toBe(true);
+  });
+
+  it('re-evaluates a dismissible function on every attempt', () => {
+    let locked = true;
+    const handle = openModal({ title: 'T', content: 'C', dismissible: () => !locked });
+    press(handle.dialog, 'Escape');
+    expect(handle.root.isConnected).toBe(true);
+    // Not dismissible at open → no close button, but Escape must start working
+    // as soon as the function says so.
+    expect(handle.dialog.querySelector('.modal__close')).toBeNull();
+
+    locked = false;
+    press(handle.dialog, 'Escape');
+    expect(handle.root.isConnected).toBe(false);
+  });
+
+  it('wires a submit action to its form without running the click handler', () => {
+    const form = document.createElement('form');
+    form.id = 'person-form-1';
+    document.body.append(form);
+    const handle = openModal({
+      title: 'T',
+      content: 'C',
+      actions: [{ label: 'Save', kind: 'accent', type: 'submit', form: 'person-form-1' }],
+    });
+    const save = Array.from(handle.dialog.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Save',
+    ) as HTMLButtonElement;
+    expect(save.type).toBe('submit');
+    expect(save.getAttribute('form')).toBe('person-form-1');
+  });
+
+  it('locks page scroll while open and releases it on close', () => {
+    const handle = openModal({ title: 'T', content: 'C' });
+    expect(document.documentElement.classList.contains('modal-open')).toBe(true);
+    handle.close();
+    expect(document.documentElement.classList.contains('modal-open')).toBe(false);
   });
 });

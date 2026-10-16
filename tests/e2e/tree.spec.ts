@@ -28,7 +28,9 @@ async function signInAs(page: Page, email: string): Promise<void> {
   await page.locator('#sign-in-email').fill(email);
   await page.locator('#sign-in-password').fill(PASSWORD);
   await page.locator('#sign-in-submit').click();
-  await expect(page.locator('#tree-stage')).toBeVisible();
+  // The workspace toolbar is view-agnostic: admins land on the tree, editors
+  // on their branch workspace (Phase 4).
+  await expect(page.locator('#view-tree')).toBeVisible();
 }
 
 async function waitForTree(page: Page, total = 13): Promise<void> {
@@ -77,8 +79,16 @@ test('admin can reveal soft-deleted people', async ({ page }, testInfo) => {
   await waitForTree(page);
 });
 
-test('editor never sees deleted people or the toggle', async ({ page }) => {
+test('editor lands in the branch workspace; the tree still hides deleted people', async ({ page }) => {
   await signInAs(page, 'editor@example.test');
+
+  // Phase 4: a branch-limited editor starts in their guided workspace (K1).
+  await expect(page.locator('#branch-host')).toBeVisible();
+  await expect(page.locator('#view-branch')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('#branch-host .branch-anchor')).toContainText('Amir Fixture');
+
+  // Choosing the tree persists and shows the same family without deleted rows.
+  await page.locator('#view-tree').click();
   await waitForTree(page);
   await expect(page.locator('#show-deleted')).toHaveCount(0);
   await expect(page.locator('#tree-world .pcard', { hasText: 'Kashif Fixture' })).toHaveCount(0);

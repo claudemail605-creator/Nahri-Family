@@ -4,24 +4,50 @@ import type { I18n } from '../../core/i18n';
 import { getDisplayName } from '../../core/i18n/display';
 import type { Lang } from '../../core/types';
 import { h } from '../../ui/dom';
+import { openLightbox } from '../../ui/lightbox';
 import { genderClass, type Person, type TreeModel } from './model';
+import { photoValidationMessage, validatePhoto } from './photo';
 import { genderLabelKey } from './render';
 
 /**
  * The details sheet — the reference panel's sections (Personal / Family /
- * Passing / Relatives / Record / localized names) rebuilt read-only for
- * Phase 3: no photo, no edit actions (those arrive with their own phases).
+ * Passing / Relatives / Record / localized names) plus the Phase 4 layers:
+ * the action bar (edit, add child, add root, request deletion, soft
+ * delete/restore, history), the photo section (signed URL, upload / replace /
+ * remove, lightbox) and the change-history box.
  *
- * Relatives are navigation buttons; the record section shows "Last edited"
- * and, for admins, upgrades it with who made the change from `audit_log`
- * (a failed read is not worth an error — the timestamp still shows).
+ * Everything interactive is delegated to `DetailsActions` (built by
+ * `actions.ts`), so this module only renders and reports clicks. The panel
+ * never decides permissions itself — `canEditPerson` comes from the same
+ * database mirror the RLS uses.
  */
+
+export interface DetailsActions {
+  canEditPerson(person: Person): boolean;
+  isAdmin(): boolean;
+  isActiveEditor(): boolean;
+  edit(person: Person): void;
+  addChild(person: Person): void;
+  addRoot(): void;
+  requestDeletion(person: Person): void;
+  softDelete(person: Person): Promise<void>;
+  restorePerson(person: Person): Promise<void>;
+  /** Load + render the audit list into `box`; flips the toggle button's label. */
+  toggleHistory(person: Person, box: HTMLElement, toggleBtn: HTMLButtonElement): void;
+  /** Signed URL for a stored photo (cached); null when there is nothing. */
+  photoUrl(path: string): Promise<string | null>;
+  /** Upload a chosen file for the person. Resolves when saved (or throws). */
+  uploadPhoto(person: Person, file: File): Promise<void>;
+  /** Confirm + remove the stored photo. Resolves when saved (or throws). */
+  removePhoto(person: Person): Promise<void>;
+}
 
 export interface DetailsPanelDeps {
   i18n: I18n;
   lang: Lang;
   client: SupabaseClient;
-  isAdmin: boolean;
+  actions: DetailsActions;
+  toast(message: string): void;
   onClose(): void;
   /** Relative-button click: select + centre that person. */
   onNavigate(personId: string): void;
@@ -33,7 +59,7 @@ export function renderDetails(
   model: TreeModel,
   deps: DetailsPanelDeps,
 ): void {
-  const { i18n, lang } = deps;
+  const { i18n, lang, actions } = deps;
   const name = getDisplayName(person, lang);
   const kids = model.kids.get(person.id) ?? [];
   const siblings = person.parent
@@ -73,6 +99,41 @@ export function renderDetails(
           (p.nick ? p.nick + ' – ' : '') + getDisplayName(p, lang),
         ),
       ),
+    );
+  }
+
+  /** Run an async action with the button disabled (label swap optional). */
+  function busy(button: HTMLButtonElement, label: string | null, task: () => Promise<void>): void {
+    const previous = button.textContent;
+    button.disabled = true;
+    if (label) button.textContent = label;
+    void task()
+      .catch(() => {
+        /* the action layer has already reported the failure */
+      })
+      .finally(() => {
+        if (button.isConnected) {
+          button.disabled = false;
+          button.textContent = previous;
+        }
+      });
+  }
+
+  function actionButton(
+    id: string,
+    kind: string,
+    label: string,
+    onclick: (button: HTMLButtonElement) => void,
+  ): HTMLButtonElement {
+    return h(
+      'button',
+      {
+        type: 'button',
+        class: `btn btn--sm ${kind}`.trim(),
+        id,
+        onclick: (event: MouseEvent) => onclick(event.currentTarget as HTMLButtonElement),
+      },
+      label,
     );
   }
 
@@ -160,9 +221,177 @@ export function renderDetails(
       )
     : null;
 
-  const bodyParts = [personal, family, passing, relativesSec, record, nameUr, nameHi].filter(
-    (s): s is HTMLElement => s !== null,
+  /* --------------------------------- photo --------------------------------- */
+
+  const hasPhoto = !!person.photo_path;
+  const canManagePhoto = actions.canEditPerson(person) && !person.is_deleted;
+  const photoAlt = i18n.fmt('photos.alt', { name });
+
+  const photoImg = h('img', {
+    class: 'photo-frame__img',
+    id: 'panel-photo-img',
+    alt: photoAlt,
+    hidden: true,
+  });
+  const photoEmpty = h(
+    'span',
+    { class: 'photo-frame__empty', id: 'panel-photo-empty' },
+    i18n.t(hasPhoto ? 'photos.loading' : 'photos.none'),
   );
+  const photoZoom = h(
+    'button',
+    {
+      type: 'button',
+      class: 'photo-frame__zoom',
+      id: 'panel-photo-zoom',
+      'aria-label': i18n.t('photos.viewLarger'),
+      title: i18n.t('photos.viewLarger'),
+      hidden: true,
+    },
+    '⤢',
+  );
+  const photoFrame = h(
+    'div',
+    { class: 'photo-frame', id: 'panel-photo-frame' },
+    photoImg,
+    photoEmpty,
+    photoZoom,
+  );
+
+  photoImg.addEventListener('click', () => {
+    if (!photoImg.hidden && photoImg.src) openLightbox({ src: photoImg.src, alt: photoAlt, closeLabel: i18n.t('panel.close') });
+  });
+  photoZoom.addEventListener('click', () => {
+    if (!photoImg.hidden && photoImg.src) openLightbox({ src: photoImg.src, alt: photoAlt, closeLabel: i18n.t('panel.close') });
+  });
+
+  const avatar = h(
+    'div',
+    { class: `p-avatar p-avatar--${genderClass(person)}`, 'aria-hidden': 'true' },
+    person._initials,
+    h('img', { class: 'p-avatar__img', id: 'panel-avatar-img', alt: '', hidden: true }),
+  );
+
+  if (hasPhoto) {
+    void actions
+      .photoUrl(person.photo_path as string)
+      .then((url) => {
+        // The sheet may have moved on to another person while we waited.
+        if (!url || host.dataset.personId !== person.id || !photoImg.isConnected) return;
+        photoImg.onload = () => {
+          photoImg.hidden = false;
+          photoEmpty.hidden = true;
+          photoZoom.hidden = false;
+          const avatarImg = avatar.querySelector('img');
+          if (avatarImg instanceof HTMLImageElement) {
+            avatarImg.src = url;
+            avatarImg.hidden = false;
+          }
+        };
+        photoImg.onerror = () => {
+          photoEmpty.textContent = i18n.t('photos.errLoad');
+        };
+        photoImg.src = url;
+      })
+      .catch((err: unknown) => {
+        console.warn('Could not sign the photo URL:', err);
+        photoEmpty.textContent = i18n.t('photos.errLoad');
+      });
+  }
+
+  const photoActions: Array<HTMLElement | null> = [];
+  if (canManagePhoto) {
+    const pickInput = h('input', {
+      type: 'file',
+      id: 'panel-photo-input',
+      accept: 'image/jpeg,image/png,image/webp',
+      hidden: true,
+    });
+    const pickBtn = actionButton(
+      'panel-photo-pick',
+      '',
+      i18n.t(hasPhoto ? 'photos.replace' : 'photos.upload'),
+      () => pickInput.click(),
+    );
+    pickInput.addEventListener('change', () => {
+      const file = pickInput.files?.[0] ?? null;
+      pickInput.value = '';
+      if (!file) return;
+      const check = validatePhoto(file);
+      const message = photoValidationMessage(i18n, file, check);
+      if (message) {
+        deps.toast(message);
+        return;
+      }
+      busy(pickBtn, i18n.t('photos.uploading'), () => actions.uploadPhoto(person, file));
+    });
+    photoActions.push(pickBtn, pickInput);
+    if (hasPhoto) {
+      const removeBtn = actionButton('panel-photo-remove', 'btn--danger', i18n.t('photos.remove'), (button) =>
+        busy(button, i18n.t('photos.removing'), () => actions.removePhoto(person)),
+      );
+      photoActions.push(removeBtn);
+    }
+  }
+
+  const photoSec = h(
+    'div',
+    { class: 'p-sec p-photo' },
+    h('h5', { text: i18n.t('panel.photo') }),
+    photoFrame,
+    photoActions.length ? h('div', { class: 'photo-actions' }, ...photoActions.filter((b): b is HTMLElement => !!b)) : null,
+  );
+
+  /* ------------------------------- action bar ------------------------------- */
+
+  const canEdit = actions.canEditPerson(person);
+  const isAdmin = actions.isAdmin();
+  const actionButtons: HTMLElement[] = [];
+
+  if (!person.is_deleted) {
+    if (canEdit) {
+      actionButtons.push(
+        actionButton('panel-edit', '', i18n.t('panel.edit'), () => actions.edit(person)),
+        actionButton('panel-add-child', 'btn--primary', i18n.t('panel.addChild'), () => actions.addChild(person)),
+      );
+    }
+    if (isAdmin) {
+      actionButtons.push(actionButton('panel-add-root', '', i18n.t('panel.addRoot'), () => actions.addRoot()));
+    }
+    if (actions.isActiveEditor() && canEdit) {
+      actionButtons.push(
+        actionButton('panel-request-deletion', '', i18n.t('panel.requestDeletion'), () =>
+          actions.requestDeletion(person),
+        ),
+      );
+    }
+    if (isAdmin) {
+      actionButtons.push(
+        actionButton('panel-soft-delete', 'btn--danger', i18n.t('panel.softDelete'), (button) =>
+          busy(button, null, () => actions.softDelete(person)),
+        ),
+      );
+    }
+  } else if (isAdmin) {
+    actionButtons.push(
+      actionButton('panel-restore', 'btn--primary', i18n.t('panel.restore'), (button) =>
+        busy(button, null, () => actions.restorePerson(person)),
+      ),
+    );
+  }
+
+  const historyBox = h('div', { class: 'p-audit', id: 'panel-history-box', hidden: true });
+  let historyButton: HTMLButtonElement | null = null;
+  if (canEdit || isAdmin) {
+    historyButton = actionButton('panel-history', '', i18n.t('panel.showHistory'), (button) =>
+      actions.toggleHistory(person, historyBox, button),
+    );
+    actionButtons.push(historyButton);
+  }
+
+  const actionBar = actionButtons.length
+    ? h('div', { class: 'p-actions', id: 'panel-actions' }, ...actionButtons)
+    : null;
 
   /* --------------------------------- head --------------------------------- */
 
@@ -193,23 +422,31 @@ export function renderDetails(
       },
       '✕',
     ),
-    h('div', { class: `p-avatar p-avatar--${genderClass(person)}`, 'aria-hidden': 'true' }, person._initials),
+    avatar,
     h('h3', { class: 'p-name', text: name }),
     person.nick ? h('div', { class: 'p-nick', text: i18n.fmt('panel.nick', { nick: person.nick }) }) : null,
     tags,
   );
 
+  const bodyParts = [personal, family, passing, relativesSec, record, nameUr, nameHi].filter(
+    (s): s is HTMLElement => s !== null,
+  );
+
   host.dataset.personId = person.id;
-  host.replaceChildren(
+  const sections: Array<HTMLElement | null> = [
     head,
+    actionBar,
+    photoSec,
     bodyParts.length
       ? h('div', { class: 'p-body' }, ...bodyParts)
       : h('div', { class: 'p-none', text: i18n.t('panel.noDetails') }),
-  );
+    historyBox,
+  ];
+  host.replaceChildren(...sections.filter((node): node is HTMLElement => node !== null));
   host.hidden = false;
   host.scrollTop = 0;
 
-  if (lastEditedSlot && deps.isAdmin) {
+  if (lastEditedSlot && isAdmin) {
     void hydrateLastEdited(lastEditedSlot, person, deps);
   }
 }

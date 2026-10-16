@@ -161,7 +161,21 @@ export function renderTreeInto(world: HTMLElement, options: TreeRenderOptions): 
         'aria-label': name,
       },
       h('span', { class: 'pcard__rail', 'aria-hidden': 'true' }),
-      h('span', { class: 'pcard__avatar', 'aria-hidden': 'true' }, p._initials),
+      h(
+        'span',
+        { class: 'pcard__avatar', 'aria-hidden': 'true' },
+        p._initials,
+        // Hidden until the batch-signed URL loads; a broken photo falls back
+        // to the initials silently (I1: batch signing).
+        p.photo_path
+          ? h('img', {
+              class: 'pcard__photo',
+              alt: '',
+              hidden: true,
+              dataset: { cardPhoto: p.photo_path },
+            })
+          : null,
+      ),
       h(
         'span',
         { class: 'pcard__body' },

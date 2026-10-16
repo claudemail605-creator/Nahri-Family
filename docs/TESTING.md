@@ -3,7 +3,7 @@
 Every test that exists, how to run it, and what it proved — kept current after
 every phase. Every claim in this file corresponds to a command that was really
 run; outputs below were copied from the terminal on **2026-10-16**
-(Phases 1–3).
+(Phases 1–4).
 
 ## Test levels (what is verified where)
 
@@ -237,6 +237,157 @@ mid-stagger, settled, the sheet mid-slide, mid-exit, gone, and a mid-tween zoom
 at 1440×900. Reviewed by eye: the cascade is visible without hiding content,
 the sheet fades and drifts out, the canvas reclaims the sheet's width cleanly,
 and the zoom tween keeps the double-clicked point sensible. `pageerror` count: 0.
+
+## Phase 4 — Editing and the branch workspace
+
+The first phase with **writes**. Every write flow was exercised against the mock
+Supabase only (browser simulation); no live row was touched — the owner's test
+account and a separate explicit OK for live writes are still pending.
+
+### Gate commands and results
+
+| Command | Result |
+| --- | --- |
+| `cmd /c "npm run typecheck"` | clean (strict TypeScript, no errors) |
+| `cmd /c "npm test"` | **20 files, 228 tests, all passed** (Vitest 5.0.5, jsdom) |
+| `cmd /c "npm run build"` | `index.html` 1.95 kB, CSS 37.87 kB (7.90 kB gzip), JS 432.70 kB (115.71 kB gzip) |
+| `cmd /c "npx playwright test"` | **99 passed, 1 skipped** (50 tests × desktop + mobile, ~60 s) against the `vite build --mode e2e` bundle + mock Supabase — the one skip is the desktop-only hover-tooltip test on the Pixel 7 project, by design |
+
+### Unit tests added in Phase 4
+
+| File | What it proves |
+| --- | --- |
+| `tests/unit/tree-edit.test.ts` | `validateAndBuild`: name + gender in form order, unparseable/future dates rejected, death before birth rejected, blanks → null, stored dates sliced to `YYYY-MM-DD` (DD/MM accepted); `valuesFromPerson` round-trip (gender cleared unless exactly Male/Female); `valuesForNewChild` (father/mother from the parent + spouse, never both); `findDuplicate` (case-insensitive, same parent only, never the edited person, blanks ignored); `fieldDiffs` (labelled columns only, a changed parent counts); `restorePayloadFromAudit` (form-ownable columns, parent moves admin-only, `null` restores the root). The write layer: `insertPerson` sends the 17-column whitelist + `parent_id` and returns the created row; `updatePerson` targets one id and never sends an empty patch; `setPersonDeleted` flips the flag alone; `requestDeletion` inserts the reason; `fetchAuditLog` reads one person newest-first with the history columns; `diffPayload` (changed columns only, `null` clears, null = empty) |
+| `tests/unit/tree-photo.test.ts` | `photoKey` accepts the stored path forms and rejects junk; `photoExtFor` / `validatePhoto` (four types by MIME or extension; missing / bad type / oversize with the real byte size in the message); error mapping (RLS, permission, auth classified from the server text); `signedPhotoUrl(s)` (cache hit, batch-sign missing keys de-duplicated, re-ask after a cache clear, batch failures thrown, missing single = null); `uploadPhoto` (fresh object name, row update, old object deleted; same-millisecond retry; the new object rolled back when the row update fails); `removePhoto` (row cleared first, then the object; row-only when no stored path; a failed row update never touches the object) |
+| `tests/unit/branch.test.ts` | `completeness` counts only really-saved fields, lists missing items in the fixed order, rounds the percent, `dob_text` counts as a birth date, unknown gender is not-applicable; `branchPeopleOf` returns the anchor + every descendant depth-first (cycle-safe) and empty for an unknown id |
+| `tests/unit/modal.test.ts` (extended) | subtitle + dialog class; `dismissible` as a function re-evaluated per attempt; submit actions carrying a `form` id; **dialog stacking**: Escape closes only the top dialog, the one below stays open and `inert` until revealed |
+
+### End-to-end tests added in Phase 4 (`tests/e2e/edit.spec.ts`, desktop + mobile)
+
+All write assertions read the raw recorded request bodies back from the mock
+(`/__mock/writes?token=…` scoped to the browser session), so the whitelist and
+minimal-diff claims are checked against what the client actually sent.
+
+| Test | What it proves |
+| --- | --- |
+| admin adds a new root from the details sheet | the INSERT body is the fields that were filled; the sheet selects the created person; "Showing all 14 people" |
+| the form refuses to save without a name or gender | inline field errors + one toast; nothing written |
+| admin edits a person; only the changed fields are written | the PATCH body is exactly `{ nick_name, qualification }` |
+| a duplicate child name warns first; cancelling keeps the form, confirming saves | the warning stacks over the still-open form; cancel = no insert; confirm inserts under the chosen parent |
+| admin moves a person with the parent picker | the PATCH body is exactly `{ parent_id }` |
+| editor adds a child from their branch tile | details fill from the tile; the insert carries the child defaults; the branch tile count goes 10 → 11 |
+| the branch workspace guides the editor | landing view; live stats 10 / 0 / 10; needs-details filter; next-incomplete jump + toast; Start highlights the tile; the tile opens the sheet; edit and add-child round-trip; back to the tree persists across reload |
+| an editor with two branches can switch between them | the chooser renders both assigned anchors (first active); switching swaps the grid (10 → 3 tiles) and the stats |
+| the add-spouse tile action edits the spouse text on the same record | the PATCH body is exactly `{ spouse_name }` |
+| an editor with no assignment sees the honest no-access message | the hero explains it, no fake grant; "open the tree" still works |
+| admin never sees the branch tab | role gating of the view switch |
+| admin uploads a photo; it appears on the card and in the panel | the object lands under `<person-uuid>/<ms>.png`, the row PATCH is exactly `{ photo_path }`, the panel image is a signed URL, the tree card hydrates through the batch signer, the lightbox opens and Escape closes it |
+| admin removes a photo | both patches collected (`{ photo_path }` on upload, `{ photo_path: null }` on remove), the object removal is recorded, the empty state shows, the card photo is gone |
+| the edit form carries a photo through the same save (choose, then remove) | the form picker previews the file, uploads after save; re-opening offers Remove; saving clears the column and deletes the object |
+| soft delete refuses to orphan living relatives | the refusal carries the computed counts (9 descendants / 8 living) and nothing is written |
+| admin deletes and restores a childless person | the patch log is exactly `[is_deleted: true]` → `[is_deleted: false]`; the person leaves and returns (desktop + the mobile drawer path) |
+| editor submits a deletion request | the reason is required; the row is `{ person_id, reason, status: 'pending' }` |
+| the history shows who changed what, and a version can be restored | three audit rows newest-first; "Restore this version" writes exactly the snapshot's whitelisted fields; the name reverts |
+
+### The modal policy changed (a real behavioural bug found and fixed)
+
+The original policy allowed **one dialog at a time**, which was fine until the
+duplicate warning: the reference used blocking `window.confirm`, so the form
+survived underneath; an in-DOM dialog opened with the old policy would have
+destroyed the form and everything typed into it. `modal.ts` now keeps a stack —
+Escape and backdrop clicks only close the top dialog, the one below stays open
+and `inert` until revealed, the page scroll lock is released only when the last
+dialog closes, and each dialog restores its own opener. Unit-tested, and the
+duplicate E2E drives the stack end to end.
+
+### Mock additions in Phase 4 (documented, not hidden)
+
+- People **writes** with the triggers from `..\reference\database\01_schema.sql`
+  re-implemented: unknown column → `PGRST204`, RLS for insert/update (admin OR
+  `can_edit_person`), the admin-only guard resetting `legacy_id`/`created_by`,
+  path recompute + descendant cascade, `updated_*` stamps, and `audit_log` rows
+  (skipped when only path/stamps changed). Verified by a 51-check smoke script
+  that drives the **real supabase-js client** against the mock (`screenshots/`,
+  scratch, git-ignored).
+- **Per-access-token write overlays** over immutable fixtures, so parallel
+  projects (desktop + mobile) can write the same fixture person without
+  clobbering each other; `/__mock/writes?token=…` returns exactly one browser
+  session's rows, and records the raw INSERT and PATCH bodies for the contract
+  assertions. `/__mock/writes?email=…` still merges the account's sessions.
+- Storage: objects live in memory keyed by the unique upload path, `remove()`
+  records the deleted keys, signing mints opaque `?token=` URLs; a signed GET
+  needs no Authorization header so a plain `<img>` works.
+- New fixtures: `twobranch@example.test` (two assigned branches) and
+  `nobranch@example.test` (active editor, no assignment).
+- Mock bugs found by the smoke script and fixed: same-second sign-ins minted
+  colliding JWTs and shared an overlay (a `jti` now separates them); the people
+  GET lacked `eq` scalar filters and `.single()`/`PGRST116` support.
+
+### A real layout bug found during the visual review (fixed)
+
+On desktop, opening the details sheet for a person with lots of content grew the
+whole document (a 1 272 px sheet on a 900 px viewport): the page scrolled and
+pushed the toolbar and filter sidebar off-screen, and the sheet's own
+`overflow-y` never engaged. Fixed at the shell: `.app-shell` now owns the
+viewport (`height: 100dvh; overflow: hidden`), `.app-main` keeps an overflow-y
+safety valve with horizontal clipping for the off-canvas drawer, and the gate
+centres with auto margins so a tall card stays reachable on a short screen.
+Verified by measurement — document `scrollHeight` equals `innerHeight`; a wheel
+over the sheet scrolls the sheet (scrollTop 490) while the page stays at 0; the
+workspace and stage end exactly at the viewport bottom; the gate card is
+centred — and re-reviewed visually. The full suite was re-run green afterwards.
+
+### Deliberate simplifications (documented, not hidden)
+
+- The living-descendant guard walks the **visible model**, exactly like the
+  reference client; soft-deleted descendants are invisible to a non-admin walk,
+  so its counts can differ from a raw SQL walk. Documented in the code.
+- The mock's signed photo URLs are opaque tokens without expiry enforcement
+  within a run; the real project enforces the 3600 s TTL.
+- History reads the newest 200 `audit_log` rows of one person (reference
+  behaviour); no cursor pagination.
+- The tests synthesise photo files (a 1×1 PNG through the real browser
+  downscale path); no camera or gallery picker has been exercised on real
+  hardware (L3).
+
+### Bugs found in the tests, not the app (fixed in the specs)
+
+- The remove-photo assertion read the first patch for the person (the upload);
+  it now collects all patches.
+- Cards can sit outside the visible canvas (it is a pan/zoom surface), so
+  clicking one by mouse failed on the phone viewport; selection is done with
+  keyboard focus + Enter.
+- On a phone the open details sheet covers the drawer's lower controls, so the
+  delete/restore test closes the sheet before touching the sidebar.
+
+### Visual review (screenshots, not pass/fail)
+
+A scratch script (git-ignored under `screenshots/`) captured, at 1440×900 and on
+the Pixel 7 profile: the details sheet with the action bar, the photo section
+empty and with an uploaded photo, the scrolled history box with audit rows and
+"Restore this version", the form with validation errors, the duplicate warning
+stacked over the intact form, the soft-delete refusal with its counts, the
+branch workspace (hero, stats, progress bar, segment filter, tiles with rings,
+missing chips, actions) and the Start highlight, plus the mobile sheet and the
+open drawer. Reviewed by eye: layout held, toasts legible, the stack visually
+clear. `pageerror` count: 0.
+
+A second pass switched the interface to Urdu: the document flips to RTL, the
+canvas stays LTR (`documentElement.dir === 'rtl'`, stage `dir="ltr"`, both
+asserted), and the details sheet, edit form, history box and branch workspace
+all mirror correctly with the Urdu font loaded. `pageerror` count: 0. One string
+is flagged for the owner's native-speaker pass: the tags row reads "باقی رقم F1"
+for "legacy F1" — that wording is the reference app's own dictionary value, the
+extraction is faithful to it, and it is left unchanged for now.
+
+### Not yet tested (Phase 4)
+
+- No physical-device run: the file picker, the lightbox swipe and the bottom
+  sheet's touch feel are L3 items.
+- No live write against the real Supabase project — the owner's test account
+  and a separate explicit OK are still pending. Every write here was simulated.
+- The admin queue for deletion requests (F2) and the recently-deleted list (F6)
+  arrive in Phase 5.
 
 ## Manual checks that were performed
 

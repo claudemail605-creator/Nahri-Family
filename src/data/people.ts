@@ -75,3 +75,135 @@ export async function fetchAllPeople(
   }
   return out;
 }
+
+/* ------------------------------ write contract ----------------------------- */
+
+/**
+ * Every column the person form may write — the whitelist. `path`,
+ * `created_by`, `updated_by`, `legacy_id`, `source` and the timestamps are
+ * never sent from the browser: the database's triggers own them (an editor's
+ * write is forced back to the old values anyway). Same list as the reference
+ * `ALL_FIELDS`, one source of truth for the form, the history diffs and the
+ * "restore this version" payload.
+ */
+export const EDITABLE_COLUMNS = [
+  'full_name',
+  'nick_name',
+  'name_ur',
+  'name_hi',
+  'gender',
+  'fathers_name',
+  'mothers_name',
+  'spouse_name',
+  'spouse_father_name',
+  'dob',
+  'dob_text',
+  'place_of_birth',
+  'qualification',
+  'dod',
+  'dod_text',
+  'place_of_burial',
+  'notes',
+] as const;
+
+export type EditableColumn = (typeof EDITABLE_COLUMNS)[number];
+
+/** Column → value as the form holds it; null means "clear this field". */
+export type PersonValues = Partial<Record<EditableColumn, string | null>>;
+
+/** Writes outside the form's whitelist: the photo flow and (admin) moves. */
+export interface PersonPatch extends PersonValues {
+  parent_id?: string | null;
+  photo_path?: string | null;
+}
+
+/**
+ * Only the keys that actually differ between two payloads — null and blank
+ * compare equal, everything else compares as text (same rule as the
+ * reference's changed-fields diff).
+ */
+export function diffPayload(original: PersonValues, next: PersonValues): PersonValues {
+  const out: PersonValues = {};
+  for (const col of EDITABLE_COLUMNS) {
+    if (!(col in next)) continue;
+    const before = original[col] == null ? '' : String(original[col]);
+    const after = next[col] == null ? '' : String(next[col]);
+    if (before !== after) out[col] = next[col] ?? null;
+  }
+  return out;
+}
+
+/** INSERT a new person. `parent_id` only plus the whitelisted columns. */
+export async function insertPerson(
+  client: SupabaseClient,
+  values: PersonValues,
+  parentId: string | null,
+): Promise<RawPersonRow> {
+  const { data, error } = await client
+    .from('people')
+    .insert({ ...values, parent_id: parentId })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data as RawPersonRow;
+}
+
+/** UPDATE with a caller-built patch; an empty patch is a no-op. */
+export async function updatePerson(
+  client: SupabaseClient,
+  id: string,
+  patch: PersonPatch,
+): Promise<void> {
+  if (!Object.keys(patch).length) return;
+  const { error } = await client.from('people').update(patch).eq('id', id);
+  if (error) throw error;
+}
+
+/** Admin-only soft delete / restore (RLS + the guard trigger enforce it). */
+export async function setPersonDeleted(
+  client: SupabaseClient,
+  id: string,
+  deleted: boolean,
+): Promise<void> {
+  const { error } = await client.from('people').update({ is_deleted: deleted }).eq('id', id);
+  if (error) throw error;
+}
+
+/** An editor's request for an admin to delete a person. */
+export async function requestDeletion(
+  client: SupabaseClient,
+  personId: string,
+  reason: string,
+): Promise<void> {
+  const { error } = await client.from('deletion_requests').insert({ person_id: personId, reason });
+  if (error) throw error;
+}
+
+/* --------------------------------- audit ---------------------------------- */
+
+/** One `audit_log` row as the history panel needs it. */
+export interface AuditRow {
+  id: number | string;
+  action: string; // insert | update | delete | restore | hard_delete
+  changed_by: string | null;
+  changed_by_name: string | null;
+  old_data: Record<string, unknown> | null;
+  new_data: Record<string, unknown> | null;
+  changed_at: string | null;
+}
+
+/** Newest-first change history for one person (RLS limits who may read it). */
+export async function fetchAuditLog(
+  client: SupabaseClient,
+  personId: string,
+  limit = 200,
+): Promise<AuditRow[]> {
+  const { data, error } = await client
+    .from('audit_log')
+    .select('id, action, changed_by, changed_by_name, old_data, new_data, changed_at')
+    .eq('person_id', personId)
+    .order('changed_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as AuditRow[];
+}

@@ -1,10 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { STORAGE_KEYS } from '../../core/config';
 import type { I18n, MessageKey } from '../../core/i18n';
 import { getDisplayName } from '../../core/i18n/display';
 import { prefersReducedMotion } from '../../core/motion';
+import type { WorkspacePermissions } from '../../core/permissions';
+import { safeStorage } from '../../core/storage';
 import { fetchAllPeople } from '../../data/people';
 import { h } from '../../ui/dom';
 import { extractMessage } from '../auth/errors';
+import { createWorkspaceActions } from './actions';
+import { createBranchView } from './branch';
 import {
   computeVisibility,
   createFilters,
@@ -17,6 +22,7 @@ import { layoutTree, NODE_H, type LayoutResult } from './layout';
 import { buildModel, toPerson, type Person, type TreeModel } from './model';
 import { PanZoomController } from './panzoom';
 import { renderDetails } from './panel';
+import { photoKey, signedPhotoUrls } from './photo';
 import { genderLabelKey, renderTreeInto } from './render';
 import { renderTable, sortPeople, type TableColumnKey, type TableSort } from './table';
 
@@ -36,7 +42,8 @@ import { renderTable, sortPeople, type TableColumnKey, type TableSort } from './
 export interface TreeWorkspaceDeps {
   i18n: I18n;
   client: SupabaseClient;
-  isAdmin: boolean;
+  /** Live permission view (the AuthController); asked per call, never cached. */
+  permissions: WorkspacePermissions;
   onSignOut(): void;
   toast(message: string): void;
 }
@@ -46,10 +53,21 @@ export interface TreeWorkspace {
   dispose(): void;
 }
 
-type ViewMode = 'tree' | 'table';
+type ViewMode = 'tree' | 'table' | 'branch';
+
+/**
+ * The remembered view (`nahri.view`). Editors land in the branch workspace on
+ * their first visit (K1); after that — and always for non-editors — the
+ * stored choice wins.
+ */
+function readStoredView(): ViewMode | null {
+  const value = safeStorage()?.getItem(STORAGE_KEYS.view);
+  return value === 'tree' || value === 'table' || value === 'branch' ? value : null;
+}
 
 export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
-  const { i18n, client, isAdmin } = deps;
+  const { i18n, client, permissions } = deps;
+  const isAdmin = (): boolean => permissions.isAdmin();
   let disposed = false;
 
   /* ------------------------------- state --------------------------------- */
@@ -60,7 +78,14 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
   let vis: Visibility = computeVisibility(model, filters);
   const collapsed = new Set<string>();
   let selectedId: string | null = null;
-  let view: ViewMode = 'tree';
+  const storedView = readStoredView();
+  // Editors land in their branch workspace on first visit (K1); an explicit
+  // choice — and any non-editor role — always wins.
+  let view: ViewMode = permissions.isActiveEditor()
+    ? (storedView ?? 'branch')
+    : storedView === 'table'
+      ? 'table'
+      : 'tree';
   let showDeleted = false;
   let sort: TableSort | null = null;
   let layout: LayoutResult | null = null;
@@ -83,13 +108,24 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
 
   const viewTreeBtn = h(
     'button',
-    { type: 'button', class: 'tw-tab', id: 'view-tree', 'aria-pressed': 'true' },
+    { type: 'button', class: 'tw-tab', id: 'view-tree', 'aria-pressed': String(view === 'tree') },
     i18n.t('view.tree'),
   );
   const viewTableBtn = h(
     'button',
-    { type: 'button', class: 'tw-tab', id: 'view-table', 'aria-pressed': 'false' },
+    { type: 'button', class: 'tw-tab', id: 'view-table', 'aria-pressed': String(view === 'table') },
     i18n.t('view.table'),
+  );
+  const viewBranchBtn = h(
+    'button',
+    {
+      type: 'button',
+      class: 'tw-tab',
+      id: 'view-branch',
+      'aria-pressed': String(view === 'branch'),
+      hidden: !permissions.isActiveEditor(),
+    },
+    i18n.t('branch.nav'),
   );
 
   const countEl = h('span', { id: 'result-count', class: 'tw-count' });
@@ -210,7 +246,7 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     fieldWrap('label.pob', pobSel),
     fieldWrap('label.qual', qualSel),
     fieldWrap('label.has', hasSel),
-    isAdmin ? showDeletedRow : null,
+    isAdmin() ? showDeletedRow : null,
     resetBtn,
   );
 
@@ -248,6 +284,7 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
   );
 
   const tableHost = h('div', { id: 'table-host', class: 'tw-table', hidden: true });
+  const branchHost = h('div', { id: 'branch-host', class: 'tw-branch', hidden: true });
   const detailsHost = h('aside', { id: 'details', class: 'details', hidden: true });
 
   // Coordinates live entirely in the transform. Browsers may still try to
@@ -270,6 +307,7 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
       { class: 'tw-tabs', role: 'group' },
       viewTreeBtn,
       viewTableBtn,
+      viewBranchBtn,
     ),
     countEl,
     h('div', { class: 'tw-toolbar__spacer' }),
@@ -286,7 +324,7 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     signOutBtn,
   );
 
-  const main = h('div', { class: 'tw-main' }, errorBox, emptyNote, stage, tableHost);
+  const main = h('div', { class: 'tw-main' }, errorBox, emptyNote, stage, tableHost, branchHost);
   const element = h('section', { class: 'tree-workspace' }, toolbar, h('div', { class: 'tw-body' }, sidebar, main, detailsHost));
 
   /* ------------------------------ pan / zoom ----------------------------- */
@@ -298,6 +336,37 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     },
   });
 
+  /* ------------------------------- actions -------------------------------- */
+
+  /** Language-aware display label for dialogs, pickers and branch tiles. */
+  const labelOf = (person: Person): string => getDisplayName(person, i18n.currentLang());
+
+  const actions = createWorkspaceActions({
+    i18n,
+    client,
+    permissions,
+    getModel: () => model,
+    toast: deps.toast,
+    reloadAndSelect,
+    refreshSelected: () => {
+      if (selectedId) select(selectedId);
+    },
+    closeDetails: () => closeDetails(true),
+    labelOf,
+  });
+
+  const branchView = createBranchView({
+    i18n,
+    getModel: () => model,
+    permissions,
+    select: (id) => select(id),
+    backToTree: () => setView('tree'),
+    toast: deps.toast,
+    edit: (person) => actions.edit(person),
+    addChild: (person) => actions.addChild(person),
+    labelOf,
+  });
+
   /* ------------------------------ loading -------------------------------- */
 
   async function load(): Promise<void> {
@@ -305,7 +374,7 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     errorMessage = null;
     renderError();
     try {
-      const rows = await fetchAllPeople(client, { admin: isAdmin });
+      const rows = await fetchAllPeople(client, { admin: isAdmin() });
       if (disposed) return;
       all = rows.map((row) => toPerson(row)).filter((p): p is Person => p !== null);
       loading = false;
@@ -346,6 +415,35 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     if (selectedId && !model.byId.has(selectedId)) selectedId = null;
   }
 
+  /**
+   * After a write: refetch every row (paths, stamps and the deleted flag may
+   * have changed server-side), rebuild, re-render, and select `id` when it
+   * still exists. `focus` additionally centres it in the tree view.
+   */
+  async function reloadAndSelect(
+    id: string | null,
+    options: { focus?: boolean } = {},
+  ): Promise<void> {
+    try {
+      const rows = await fetchAllPeople(client, { admin: isAdmin() });
+      if (disposed) return;
+      all = rows.map((row) => toPerson(row)).filter((p): p is Person => p !== null);
+    } catch (err) {
+      if (disposed) return;
+      deps.toast(i18n.fmt('generic.loadFailed', { msg: extractMessage(err) }));
+      return;
+    }
+    loading = false;
+    errorMessage = null;
+    renderError();
+    rebuild();
+    refresh(false);
+    if (id && model.byId.has(id)) {
+      select(id);
+      if (options.focus && view === 'tree') focusPerson(id);
+    }
+  }
+
   /* ------------------------------ rendering ------------------------------ */
 
   function refresh(refit: boolean): void {
@@ -354,18 +452,26 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     element.dir = i18n.currentLang() === 'ur' ? 'rtl' : 'ltr';
     element.dataset.view = view;
     vis = computeVisibility(model, filters);
-    if (view === 'tree') {
+    branchHost.hidden = view !== 'branch';
+    if (view === 'branch') {
+      stage.hidden = true;
+      tableHost.hidden = true;
+      // The branch workspace renders its own loading / empty states.
+      emptyNote.hidden = true;
+      branchView.render(branchHost, { loading });
+    } else if (view === 'tree') {
       renderTree(refit);
       tableHost.hidden = true;
       stage.hidden = false;
+      updateEmptyNote();
     } else {
       renderTableView();
       tableHost.hidden = false;
       stage.hidden = true;
+      updateEmptyNote();
     }
     syncSidebar();
     updateCounts();
-    updateEmptyNote();
   }
 
   function renderTree(refit: boolean): void {
@@ -385,6 +491,46 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
       fitted = true;
     }
     syncSelection();
+    void hydrateCardPhotos();
+  }
+
+  /**
+   * ONE batch-signed request for every card photo on the canvas (I1) — a
+   * card image stays hidden until it loads, so a missing or broken photo
+   * silently falls back to the initials.
+   */
+  async function hydrateCardPhotos(): Promise<void> {
+    const imgs = [...world.querySelectorAll<HTMLImageElement>('img[data-card-photo]')];
+    if (!imgs.length) return;
+    const paths = [
+      ...new Set(imgs.map((img) => img.getAttribute('data-card-photo') ?? '').filter(Boolean)),
+    ];
+    try {
+      const urls = await signedPhotoUrls(client, paths);
+      for (const img of imgs) {
+        if (!img.isConnected || img.src) continue;
+        const key = photoKey(img.getAttribute('data-card-photo'));
+        const url = key ? urls.get(key) : null;
+        if (!url) continue;
+        img.addEventListener(
+          'load',
+          () => {
+            img.hidden = false;
+          },
+          { once: true },
+        );
+        img.addEventListener(
+          'error',
+          () => {
+            img.hidden = true;
+          },
+          { once: true },
+        );
+        img.src = url;
+      }
+    } catch (err) {
+      console.warn('Could not sign the card photos:', err);
+    }
   }
 
   function fitTree(animate = false): void {
@@ -539,7 +685,8 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
         i18n,
         lang: i18n.currentLang(),
         client,
-        isAdmin,
+        actions,
+        toast: deps.toast,
         onClose: () => closeDetails(),
         onNavigate: (personId) => select(personId, { focus: true }),
       });
@@ -688,11 +835,21 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
 
   viewTreeBtn.addEventListener('click', () => setView('tree'));
   viewTableBtn.addEventListener('click', () => setView('table'));
+  viewBranchBtn.addEventListener('click', () => setView('branch'));
 
-  function setView(target: ViewMode): void {
+  function setView(target: ViewMode, persist = true): void {
+    if (target === 'branch' && !permissions.isActiveEditor()) return;
     view = target;
     viewTreeBtn.setAttribute('aria-pressed', String(target === 'tree'));
     viewTableBtn.setAttribute('aria-pressed', String(target === 'table'));
+    viewBranchBtn.setAttribute('aria-pressed', String(target === 'branch'));
+    if (persist) {
+      try {
+        safeStorage()?.setItem(STORAGE_KEYS.view, target);
+      } catch {
+        /* private mode — the choice just won't survive the reload */
+      }
+    }
     refresh(false);
   }
 

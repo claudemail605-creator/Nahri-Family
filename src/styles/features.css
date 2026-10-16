@@ -8,10 +8,16 @@
 
 .gate-host {
   flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
   padding: var(--space-6) var(--space-4);
+  overflow-y: auto;
+}
+
+/* Centre via auto margins: unlike align-items/justify-content, the card stays
+   reachable when it is taller than the viewport (small phones, open keyboard). */
+.gate-host > * {
+  margin: auto;
 }
 
 .app-shell[data-auth='ready'] .gate-host {

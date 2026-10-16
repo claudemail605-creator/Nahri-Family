@@ -1,19 +1,30 @@
 /*
  * Mock Supabase for end-to-end tests.
  *
- * Serves just enough of GoTrue and PostgREST for the app's flows: password
- * sign-in / refresh / logout, recover, set-password (PUT /user), profiles +
- * branch_access reads/updates under the same RLS rules the real database
- * enforces, the people / audit_log reads the tree workspace needs, and a
- * couple of /__mock/* helpers for the tests.
+ * Serves just enough of GoTrue, PostgREST and Storage for the app's flows:
+ * password sign-in / refresh / logout, recover, set-password (PUT /user),
+ * profiles + branch_access reads/updates under the same RLS rules the real
+ * database enforces, people reads AND writes with the real triggers
+ * (path / guard / stamps / audit_log) re-implemented, deletion_requests,
+ * the private `photos` bucket (upload / signed URL / signed download /
+ * remove), and a couple of /__mock/* helpers for the tests.
  *
  * Fixtures are fictional (example.test) and passwords are plain text — this
  * server only ever handles fake accounts on 127.0.0.1. Tokens are unsigned
  * JWT-shaped strings so supabase-js can decode their payload.
  *
- * Deliberate simplification (documented in docs/TESTING.md): refresh and
- * invite tokens stay valid until the process restarts, so tests need no
- * cleanup between runs.
+ * Deliberate simplifications (documented in docs/TESTING.md):
+ *   - refresh and invite tokens stay valid until the process restarts, so
+ *     tests need no cleanup between runs;
+ *   - people writes land in a PER-ACCESS-TOKEN overlay over the immutable
+ *     base fixtures. Parallel Playwright projects (desktop + mobile) each
+ *     sign in separately, so they can never observe or clobber each other's
+ *     writes; a token refresh starts a fresh overlay. `/__mock/writes`
+ *     merges the overlays per fixture account for direct assertions;
+ *   - uploaded photo objects are stored in memory, keyed by the object path
+ *     (which carries a unique timestamped name per upload), and served to
+ *     `<img>` requests through opaque signed tokens;
+ *   - PostgREST pagination is Range-header slicing, enough for the app.
  */
 import { createServer } from 'node:http';
 
@@ -28,8 +39,10 @@ function makeUser(id, email, profile, branchAccess = [], password = PASSWORD) {
   return { id, email, password, profile, branchAccess };
 }
 
+const ADMIN_ID = '11111111-1111-4111-8111-111111111111';
+
 const USERS = [
-  makeUser('11111111-1111-4111-8111-111111111111', 'admin@example.test', {
+  makeUser(ADMIN_ID, 'admin@example.test', {
     full_name: 'Family Admin',
     role: 'admin',
     active: true,
@@ -81,6 +94,20 @@ const USERS = [
     { full_name: 'Load Failure Tester', role: 'editor', active: true, language: 'en' },
     [],
   ),
+  // An editor assigned to two branches — exercises the anchor chooser.
+  makeUser(
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    'twobranch@example.test',
+    { full_name: 'Two Branch Editor', role: 'editor', active: true, language: 'en' },
+    ['person-a', 'person-l'],
+  ),
+  // An active editor with no assignment — the honest no-access hero.
+  makeUser(
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    'nobranch@example.test',
+    { full_name: 'No Branch Editor', role: 'editor', active: true, language: 'en' },
+    [],
+  ),
 ];
 
 /* ----------------------------- people fixtures ---------------------------- */
@@ -89,7 +116,8 @@ const USERS = [
  * A small fictional family for the tree tests — five generations, two roots,
  * a spouse-text pair, a soft-deleted row, unknown gender and a text-only
  * date. None of it resembles real family data; ids are readable slugs so
- * assertions can name a person directly.
+ * assertions can name a person directly. `path` is the ancestors root..self
+ * chain the real trigger maintains (branch_access is matched against it).
  */
 function person(over) {
   return {
@@ -116,8 +144,8 @@ function person(over) {
     photo_path: null,
     source: 'fixture.xlsx',
     is_deleted: false,
-    created_by: '11111111-1111-4111-8111-111111111111',
-    updated_by: '11111111-1111-4111-8111-111111111111',
+    created_by: ADMIN_ID,
+    updated_by: ADMIN_ID,
     created_at: NOW_ISO,
     updated_at: null,
     path: [],
@@ -142,7 +170,7 @@ const PEOPLE = [
     name_hi: 'आमिर',
     notes: 'Family patriarch (fixture).',
     updated_at: '2026-01-02T10:00:00.000Z',
-    path: ['11111111-1111-4111-8111-111111111111'],
+    path: ['person-a'],
   }),
   person({
     id: 'person-b',
@@ -154,7 +182,7 @@ const PEOPLE = [
     place_of_birth: 'Fixtureabad',
     name_ur: 'بہادر',
     name_hi: 'बहादुर',
-    path: ['11111111-1111-4111-8111-111111111111'],
+    path: ['person-a', 'person-b'],
   }),
   person({
     id: 'person-c',
@@ -164,14 +192,14 @@ const PEOPLE = [
     dob: '1925-08-20',
     dod: '2010-01-01',
     qualification: 'B.A.',
-    path: ['11111111-1111-4111-8111-111111111111'],
+    path: ['person-a', 'person-c'],
   }),
   person({
     id: 'person-j',
     full_name: 'Jamal Fixture',
     parent_id: 'person-a',
     dob_text: 'year unknown',
-    path: ['11111111-1111-4111-8111-111111111111'],
+    path: ['person-a', 'person-j'],
   }),
   person({
     id: 'person-d',
@@ -182,7 +210,7 @@ const PEOPLE = [
     dob: '1950-11-05',
     dob_text: 'circa 1950',
     place_of_birth: 'Karachi',
-    path: ['11111111-1111-4111-8111-111111111111'],
+    path: ['person-a', 'person-b', 'person-d'],
   }),
   person({
     id: 'person-e',
@@ -192,7 +220,7 @@ const PEOPLE = [
     dob: '1955-02-14',
     name_ur: 'نادیہ',
     name_hi: 'नादिया',
-    path: ['11111111-1111-4111-8111-111111111111'],
+    path: ['person-a', 'person-b', 'person-e'],
   }),
   person({
     id: 'person-k',
@@ -201,7 +229,7 @@ const PEOPLE = [
     parent_id: 'person-b',
     dob: '1958-01-01',
     is_deleted: true,
-    path: ['11111111-1111-4111-8111-111111111111'],
+    path: ['person-a', 'person-b', 'person-k'],
   }),
   person({
     id: 'person-f',
@@ -211,7 +239,7 @@ const PEOPLE = [
     spouse_name: 'Hina Fixture',
     dob: '1975-06-30',
     qualification: 'M.Sc.',
-    path: ['11111111-1111-4111-8111-111111111111'],
+    path: ['person-a', 'person-b', 'person-d', 'person-f'],
   }),
   person({
     id: 'person-g',
@@ -221,7 +249,7 @@ const PEOPLE = [
     dob: '1978-09-09',
     name_ur: 'گل',
     name_hi: 'गुल',
-    path: ['11111111-1111-4111-8111-111111111111'],
+    path: ['person-a', 'person-b', 'person-d', 'person-g'],
   }),
   person({
     id: 'person-h',
@@ -229,7 +257,7 @@ const PEOPLE = [
     gender: 'Male',
     parent_id: 'person-f',
     dob: '2005-04-01',
-    path: ['11111111-1111-4111-8111-111111111111'],
+    path: ['person-a', 'person-b', 'person-d', 'person-f', 'person-h'],
   }),
   person({
     id: 'person-i',
@@ -237,7 +265,7 @@ const PEOPLE = [
     gender: 'Female',
     parent_id: 'person-f',
     dob: '2008-12-25',
-    path: ['11111111-1111-4111-8111-111111111111'],
+    path: ['person-a', 'person-b', 'person-d', 'person-f', 'person-i'],
   }),
   // Second root: a separate branch, so the layout has several root groups.
   person({
@@ -245,6 +273,7 @@ const PEOPLE = [
     full_name: 'Laila Fixture',
     gender: 'Female',
     dob: '1900-01-01',
+    path: ['person-l'],
   }),
   person({
     id: 'person-m',
@@ -254,6 +283,7 @@ const PEOPLE = [
     spouse_name: 'Iqbal Fixture',
     dob: '1930-04-04',
     dod: '1999-12-31',
+    path: ['person-l', 'person-m'],
   }),
   person({
     id: 'person-n',
@@ -262,14 +292,52 @@ const PEOPLE = [
     parent_id: 'person-l',
     dob: '1935-07-07',
     dod: '2015-03-03',
+    path: ['person-l', 'person-n'],
   }),
 ];
 
+/*
+ * Change history for person-a (newest last). The newest row keeps the
+ * "by Family Admin" attribution other specs assert; the earlier update
+ * carries a different name so "restore this version" has something to do.
+ */
 const AUDIT_LOG = [
   {
     id: 1,
     person_id: 'person-a',
+    action: 'insert',
+    changed_by: ADMIN_ID,
     changed_by_name: 'Family Admin',
+    old_data: null,
+    new_data: null,
+    changed_at: '2025-12-01T09:00:00.000Z',
+  },
+  {
+    id: 2,
+    person_id: 'person-a',
+    action: 'update',
+    changed_by: ADMIN_ID,
+    changed_by_name: 'Family Admin',
+    old_data: {
+      full_name: 'Amir Fitri',
+      place_of_birth: null,
+      qualification: null,
+    },
+    new_data: {
+      full_name: 'Amir Fixture',
+      place_of_birth: 'Fixtureabad',
+      qualification: 'Hafiz',
+    },
+    changed_at: '2025-12-15T12:00:00.000Z',
+  },
+  {
+    id: 3,
+    person_id: 'person-a',
+    action: 'update',
+    changed_by: ADMIN_ID,
+    changed_by_name: 'Family Admin',
+    old_data: { notes: null },
+    new_data: { notes: 'Family patriarch (fixture).' },
     changed_at: '2026-01-02T10:00:00.000Z',
   },
 ];
@@ -277,8 +345,25 @@ const AUDIT_LOG = [
 /* ------------------------------- helpers -------------------------------- */
 
 let tokenSeq = 0;
+let idSeq = 0;
+let auditSeq = 100;
+let signedSeq = 0;
 const accessTokens = new Map(); // access token -> user id
 const refreshTokens = new Map(); // refresh token -> user id
+
+/**
+ * Per-access-token write overlay over the immutable base fixtures.
+ *   people            Map<id, row>  — inserted or updated effective rows
+ *   audit             audit rows appended by writes
+ *   deletionRequests  rows an editor submitted
+ *   uploads/removals  object keys touched through the storage API
+ */
+const overlays = new Map();
+
+/** Uploaded photo objects (key -> { body: Buffer, contentType }). */
+const objects = new Map();
+/** Signed download refs (opaque token -> { key, expiresAt }). */
+const signedRefs = new Map();
 
 /** Fault injection: the next N people reads for one account answer 500. */
 const failPeopleFor = new Map(); // email -> remaining failures
@@ -327,6 +412,9 @@ function mintSession(user) {
     email: user.email,
     role: 'authenticated',
     aud: 'authenticated',
+    // Unique per session so two sign-ins in the same second never collide
+    // (transparently ignored by supabase-js).
+    jti: tokenSeq,
     iat: now,
     exp: now + 3600,
   });
@@ -363,27 +451,41 @@ function sendJson(req, res, status, body) {
   res.end(payload);
 }
 
-function sendNoContent(req, res, status = 204) {
+function sendEmpty(req, res, status = 204) {
   cors(req, res);
   res.writeHead(status);
   res.end();
 }
 
-function readJson(req) {
-  return new Promise((resolve) => {
-    let raw = '';
-    req.on('data', (chunk) => {
-      raw += chunk;
-      if (raw.length > 1_000_000) req.destroy();
-    });
-    req.on('end', () => {
-      try {
-        resolve(raw ? JSON.parse(raw) : {});
-      } catch {
-        resolve({});
-      }
-    });
+function sendBinary(req, res, status, body, contentType) {
+  cors(req, res);
+  res.writeHead(status, {
+    'content-type': contentType,
+    'content-length': body.length,
   });
+  res.end(body);
+}
+
+function readRaw(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > 8_000_000) req.destroy();
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+async function readJson(req) {
+  const raw = await readRaw(req);
+  try {
+    return raw.length ? JSON.parse(raw.toString('utf8')) : {};
+  } catch {
+    return {};
+  }
 }
 
 /**
@@ -419,14 +521,45 @@ function rangeFrom(req, total) {
   const match = /^(\d+)-(\d*)$/.exec(String(req.headers.range ?? ''));
   const from = match ? Number(match[1]) : 0;
   const to = match && match[2] !== '' ? Number(match[2]) : total - 1;
-  return [Math.min(from, Math.max(0, total - 1)), Math.min(to, total - 1)];
+  return [Math.min(from, Math.max(0, total - 1)), Math.min(to, Math.max(0, total - 1))];
+}
+
+function bearerToken(req) {
+  const header = req.headers.authorization ?? '';
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  return match ? match[1] : null;
 }
 
 function bearerUserId(req) {
-  const header = req.headers.authorization ?? '';
-  const match = /^Bearer\s+(.+)$/i.exec(header);
-  if (!match) return null;
-  return accessTokens.get(match[1]) ?? null;
+  const token = bearerToken(req);
+  return token ? (accessTokens.get(token) ?? null) : null;
+}
+
+function overlayFor(token) {
+  let overlay = overlays.get(token);
+  if (!overlay) {
+    overlay = {
+      people: new Map(),
+      audit: [],
+      deletionRequests: [],
+      inserts: [],
+      patches: [],
+      uploads: [],
+      removals: [],
+    };
+    overlays.set(token, overlay);
+  }
+  return overlay;
+}
+
+/** The caller's view of `people`: immutable base rows overlaid by their writes. */
+function effectivePeople(overlay) {
+  const rows = new Map();
+  for (const base of PEOPLE) rows.set(base.id, { ...base, path: [...base.path] });
+  if (overlay) {
+    for (const [id, row] of overlay.people) rows.set(id, row);
+  }
+  return rows;
 }
 
 function restError(req, res, status, code, message) {
@@ -437,6 +570,67 @@ function restError(req, res, status, code, message) {
     message,
   });
 }
+
+/** Trigger-language error with a SQLSTATE, like PostgREST reports exceptions. */
+function triggerError(req, res, message) {
+  return restError(req, res, 400, 'P0001', message);
+}
+
+function wantsObject(req) {
+  return String(req.headers.accept ?? '').includes('application/vnd.pgrst.object+json');
+}
+
+function wantsRepresentation(req) {
+  return String(req.headers.prefer ?? '').includes('return=representation');
+}
+
+function changedByName(user) {
+  return user?.profile?.full_name ?? user?.email ?? null;
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+/** `can_edit_person()`: admin everywhere; editor inside an assigned branch. */
+function canEditPerson(user, row) {
+  if (!user || !user.profile || !user.profile.active) return false;
+  if (user.profile.role === 'admin') return true;
+  if (!row || !Array.isArray(row.path)) return false;
+  return row.path.some((id) => user.branchAccess.includes(id));
+}
+
+/** Every column the real table has — anything else is a PGRST204. */
+const SCHEMA_COLUMNS = new Set([
+  'id',
+  'legacy_id',
+  'parent_id',
+  'gender',
+  'full_name',
+  'nick_name',
+  'fathers_name',
+  'mothers_name',
+  'spouse_name',
+  'spouse_father_name',
+  'dob',
+  'dob_text',
+  'place_of_birth',
+  'qualification',
+  'dod',
+  'dod_text',
+  'place_of_burial',
+  'name_ur',
+  'name_hi',
+  'notes',
+  'photo_path',
+  'source',
+  'path',
+  'is_deleted',
+  'created_by',
+  'updated_by',
+  'created_at',
+  'updated_at',
+]);
 
 /* --------------------------------- auth --------------------------------- */
 
@@ -497,7 +691,7 @@ async function handleAuth(req, res, url) {
 
   if (req.method === 'POST' && path === '/auth/v1/logout') {
     // Tokens stay valid (documented simplification) — signing out is a client concern here.
-    return sendNoContent(req, res);
+    return sendEmpty(req, res);
   }
 
   if (req.method === 'POST' && path === '/auth/v1/recover') {
@@ -510,9 +704,195 @@ async function handleAuth(req, res, url) {
 
 /* ------------------------------- postgrest ------------------------------- */
 
+/**
+ * people INSERT — RLS (`is_admin() or parent_id is not null and
+ * can_edit_person(parent_id)`), the guard trigger (editors cannot set
+ * legacy_id/is_deleted), the path trigger and an audit row.
+ */
+async function insertPeople(req, res, url, token, user) {
+  if (!user || !user.profile || !user.profile.active) {
+    return restError(req, res, 403, '42501', 'permission denied for table people');
+  }
+  const admin = user.profile.role === 'admin';
+  const body = await readJson(req);
+  const list = Array.isArray(body) ? body : [body];
+  const overlay = overlayFor(token);
+  const rows = effectivePeople(overlay);
+  const created = [];
+
+  for (const values of list) {
+    const parentId = values.parent_id ?? null;
+    for (const key of Object.keys(values)) {
+      if (!SCHEMA_COLUMNS.has(key)) {
+        return restError(req, res, 400, 'PGRST204', `Could not find the '${key}' column of 'people' in the schema cache`);
+      }
+    }
+    if (!admin) {
+      if (!parentId || !canEditPerson(user, rows.get(parentId))) {
+        return restError(req, res, 403, '42501', 'new row violates row-level security policy for table "people"');
+      }
+    }
+
+    let path = null;
+    if (parentId != null) {
+      const parent = rows.get(parentId);
+      if (!parent) return triggerError(req, res, 'Parent not found');
+      path = [...parent.path];
+    }
+
+    idSeq += 1;
+    const id = `person-new-${idSeq}`;
+    const row = {
+      ...values,
+      id,
+      parent_id: parentId,
+      // The guard trigger silently coerces these for non-admins on INSERT.
+      legacy_id: admin ? (values.legacy_id ?? null) : null,
+      is_deleted: false,
+      source: values.source ?? null,
+      path: parentId ? [...path, id] : [id],
+      created_by: user.id,
+      updated_by: user.id,
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    };
+    const missing = ['gender', 'full_name', 'nick_name', 'fathers_name', 'mothers_name'];
+    for (const key of missing) if (!(key in row)) row[key] = null;
+    rows.set(id, row);
+    overlay.people.set(id, row);
+    overlay.inserts.push({ id, values: { ...values } });
+    overlay.audit.push({
+      id: ++auditSeq,
+      person_id: id,
+      action: 'insert',
+      changed_by: user.id,
+      changed_by_name: changedByName(user),
+      old_data: null,
+      new_data: row,
+      changed_at: nowIso(),
+    });
+    created.push(row);
+  }
+
+  if (wantsObject(req)) {
+    if (created.length !== 1) {
+      return restError(req, res, 406, 'PGRST116', 'JSON object requested, multiple (or no) rows returned');
+    }
+    return sendJson(req, res, 201, created[0]);
+  }
+  return sendJson(req, res, 201, created);
+}
+
+/**
+ * people UPDATE — RLS (`can_edit_person`), the guard trigger (parent moves
+ * and delete/restore are admin-only), the path trigger with its "own
+ * descendant" check, stamps and the audit trigger (skipping no-op updates).
+ */
+async function patchPeople(req, res, url, token, user) {
+  if (!user || !user.profile || !user.profile.active) {
+    return restError(req, res, 403, '42501', 'permission denied for table people');
+  }
+  const id = url.searchParams.get('id');
+  const idValue = id && id.startsWith('eq.') ? id.slice(3) : id;
+  const body = await readJson(req);
+  const admin = user.profile.role === 'admin';
+  const overlay = overlayFor(token);
+  const rows = effectivePeople(overlay);
+  const row = rows.get(idValue);
+
+  for (const key of Object.keys(body)) {
+    if (!SCHEMA_COLUMNS.has(key)) {
+      return restError(req, res, 400, 'PGRST204', `Could not find the '${key}' column of 'people' in the schema cache`);
+    }
+  }
+  if (!row) return sendEmpty(req, res, 204);
+  if (!canEditPerson(user, row)) {
+    return restError(req, res, 403, '42501', 'permission denied for table people');
+  }
+
+  if (!admin) {
+    // Guard trigger: raise only when the guarded value actually changes …
+    if ('parent_id' in body && (body.parent_id ?? null) !== (row.parent_id ?? null)) {
+      return triggerError(req, res, 'Only an admin can move a person to a different parent');
+    }
+    if ('is_deleted' in body && Boolean(body.is_deleted) !== Boolean(row.is_deleted)) {
+      return triggerError(req, res, 'Only an admin can delete or restore people - use a deletion request');
+    }
+  }
+
+  const next = { ...row, path: [...row.path] };
+  for (const [key, value] of Object.entries(body)) {
+    if (key === 'id' || key === 'path' || key === 'updated_at' || key === 'updated_by') continue;
+    next[key] = value;
+  }
+
+  if (!admin) {
+    // … and silently reset these before the row is written.
+    next.legacy_id = row.legacy_id;
+    next.created_by = row.created_by;
+    next.created_at = row.created_at;
+  }
+
+  if ('parent_id' in body) {
+    const parentId = body.parent_id ?? null;
+    if (parentId === null) {
+      next.path = [row.id];
+    } else {
+      const parent = rows.get(parentId);
+      if (!parent) return triggerError(req, res, 'Parent not found');
+      if (parentId === row.id || parent.path.includes(row.id)) {
+        return triggerError(req, res, 'A person cannot be placed under their own descendant');
+      }
+      next.path = [...parent.path, row.id];
+    }
+    // The fix-descendants trigger rewrites the stored path of everyone below.
+    for (const child of rows.values()) {
+      if (child.id === row.id) continue;
+      const at = child.path.indexOf(row.id);
+      if (at === -1) continue;
+      const updatedChild = { ...child, path: [...next.path, ...child.path.slice(at + 1)] };
+      overlay.people.set(child.id, updatedChild);
+    }
+  }
+
+  next.updated_at = nowIso();
+  next.updated_by = user.id;
+
+  // The audit trigger ignores updates where only path/stamps changed.
+  const strip = (candidate) => {
+    const copy = { ...candidate };
+    delete copy.path;
+    delete copy.updated_at;
+    delete copy.updated_by;
+    return copy;
+  };
+  if (JSON.stringify(strip(next)) !== JSON.stringify(strip(row))) {
+    const action =
+      next.is_deleted && !row.is_deleted ? 'delete' : row.is_deleted && !next.is_deleted ? 'restore' : 'update';
+    overlay.audit.push({
+      id: ++auditSeq,
+      person_id: row.id,
+      action,
+      changed_by: user.id,
+      changed_by_name: changedByName(user),
+      old_data: { ...row },
+      new_data: { ...next },
+      changed_at: nowIso(),
+    });
+  }
+
+  overlay.people.set(row.id, next);
+  overlay.patches.push({ id: row.id, body: { ...body } });
+
+  if (wantsObject(req)) return sendJson(req, res, 200, next);
+  if (wantsRepresentation(req)) return sendJson(req, res, 200, [next]);
+  return sendEmpty(req, res, 204);
+}
+
 async function handleRest(req, res, url) {
   const table = url.pathname.replace('/rest/v1/', '');
-  const userId = bearerUserId(req);
+  const token = bearerToken(req);
+  const userId = token ? (accessTokens.get(token) ?? null) : null;
   if (!userId) return restError(req, res, 401, 'PGRST301', 'JWT verification failed');
   const user = findUserById(userId);
 
@@ -543,7 +923,7 @@ async function handleRest(req, res, url) {
       const body = await readJson(req);
       if (typeof body.full_name === 'string') user.profile.full_name = body.full_name;
       if (typeof body.language === 'string') user.profile.language = body.language;
-      return sendNoContent(req, res);
+      return sendEmpty(req, res);
     }
   }
 
@@ -564,33 +944,225 @@ async function handleRest(req, res, url) {
       return restError(req, res, 500, 'MOCK500', 'mock load failure');
     }
     const admin = user.profile.role === 'admin';
+    const rows = [...effectivePeople(token ? overlayFor(token) : null).values()];
     const deletedFilter = queryValue('is_deleted');
-    let rows = PEOPLE.filter((row) => admin || !row.is_deleted);
-    if (deletedFilter === 'false') rows = rows.filter((row) => !row.is_deleted);
-    if (deletedFilter === 'true') rows = rows.filter((row) => row.is_deleted);
-    rows = sortRows(rows, url.searchParams.get('order'));
-    const total = rows.length;
-    const [from, to] = rangeFrom(req, total);
-    const page = total ? rows.slice(from, to + 1) : [];
+    let visible = rows.filter((row) => admin || !row.is_deleted);
+    if (deletedFilter === 'false') visible = visible.filter((row) => !row.is_deleted);
+    if (deletedFilter === 'true') visible = visible.filter((row) => row.is_deleted);
+    // Column equality filters (`col=eq.value`) — scalar columns only.
+    for (const [col, raw] of url.searchParams.entries()) {
+      if (!raw.startsWith('eq.') || !SCHEMA_COLUMNS.has(col)) continue;
+      if (col == null || col === 'path') continue;
+      const wanted = raw.slice(3);
+      visible = visible.filter((row) => String(row[col] ?? '') === wanted);
+    }
+    visible = sortRows(visible, url.searchParams.get('order'));
+    const total = visible.length;
     cors(req, res);
-    res.setHeader('Content-Range', `${total ? from : 0}-${total ? to : 0}/${total}`);
+    res.setHeader('Content-Range', `0-${Math.max(0, total - 1)}/${total}`);
+    if (wantsObject(req)) {
+      if (total !== 1) {
+        return restError(req, res, 406, 'PGRST116', 'JSON object requested, multiple (or no) rows returned');
+      }
+      return sendJson(req, res, 200, visible[0]);
+    }
+    const [from, to] = rangeFrom(req, total);
+    const page = total ? visible.slice(from, to + 1) : [];
     return sendJson(req, res, 200, page);
   }
 
+  if (table === 'people' && req.method === 'POST') {
+    return insertPeople(req, res, url, token, user);
+  }
+
+  if (table === 'people' && req.method === 'PATCH') {
+    return patchPeople(req, res, url, token, user);
+  }
+
+  if (table === 'deletion_requests' && req.method === 'POST') {
+    // RLS: requested_by = auth.uid() and can_edit_person(person_id).
+    if (!user || !user.profile || !user.profile.active) {
+      return restError(req, res, 403, '42501', 'permission denied for table deletion_requests');
+    }
+    const body = await readJson(req);
+    const list = Array.isArray(body) ? body : [body];
+    const overlay = overlayFor(token);
+    const rows = effectivePeople(overlay);
+    const created = [];
+    for (const values of list) {
+      const personId = values.person_id ?? null;
+      if (!personId || !canEditPerson(user, rows.get(personId))) {
+        return restError(req, res, 403, '42501', 'new row violates row-level security policy for table "deletion_requests"');
+      }
+      const row = {
+        id: `dr-${++idSeq}`,
+        person_id: personId,
+        requested_by: user.id,
+        reason: values.reason ?? null,
+        status: 'pending',
+        created_at: nowIso(),
+        resolved_by: null,
+        resolved_at: null,
+      };
+      overlay.deletionRequests.push(row);
+      created.push(row);
+    }
+    if (wantsObject(req)) return sendJson(req, res, 201, created[0]);
+    return sendJson(req, res, 201, created);
+  }
+
   if (table === 'audit_log' && req.method === 'GET') {
-    // RLS: the audit log is admin-readable only.
-    if (!user || !user.profile || user.profile.role !== 'admin') {
+    // RLS: admin sees all; editors see the history of people they can edit.
+    if (!user || !user.profile || !user.profile.active) {
       return restError(req, res, 403, '42501', 'permission denied for table audit_log');
     }
     const personId = queryValue('person_id');
-    let rows = AUDIT_LOG.filter((row) => !personId || row.person_id === personId);
-    rows = sortRows(rows, url.searchParams.get('order'));
+    const overlay = token ? overlays.get(token) : null;
+    const rows = effectivePeople(overlay);
+    const allowed = (row) => canEditPerson(user, rows.get(row.person_id));
+    let all = [...AUDIT_LOG, ...(overlay?.audit ?? [])];
+    if (personId) all = all.filter((row) => row.person_id === personId);
+    all = all.filter((row) => allowed(row));
+    all = sortRows(all, url.searchParams.get('order'));
     const limitRaw = url.searchParams.get('limit');
-    if (limitRaw) rows = rows.slice(0, Number(limitRaw));
-    return sendJson(req, res, 200, rows);
+    if (limitRaw) all = all.slice(0, Number(limitRaw));
+    return sendJson(req, res, 200, all);
   }
 
   return restError(req, res, 404, 'PGRST404', `No mock table: ${table}`);
+}
+
+/* --------------------------------- storage ------------------------------- */
+
+const PNG_FALLBACK = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+/** Find the uploaded file's bytes inside a multipart/form-data upload body. */
+function extractUploadedFile(req, raw) {
+  const contentType = String(req.headers['content-type'] ?? '');
+  const boundaryMatch = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType);
+  if (!boundaryMatch) return { body: PNG_FALLBACK, contentType: 'image/png' };
+  const boundary = Buffer.from(`--${boundaryMatch[1] ?? boundaryMatch[2]}`);
+  const headerEnd = Buffer.from('\r\n\r\n');
+
+  let from = raw.indexOf(boundary);
+  while (from !== -1) {
+    const start = from + boundary.length;
+    const next = raw.indexOf(boundary, start);
+    if (next === -1) break;
+    const part = raw.subarray(start, next);
+    const sep = part.indexOf(headerEnd);
+    if (sep !== -1) {
+      const headers = part.subarray(0, sep).toString('utf8').toLowerCase();
+      if (headers.includes('filename=')) {
+        let body = part.subarray(sep + headerEnd.length);
+        // Trim the trailing CRLF that precedes the next boundary.
+        if (body.length >= 2 && body[body.length - 2] === 0x0d && body[body.length - 1] === 0x0a) {
+          body = body.subarray(0, body.length - 2);
+        }
+        const typeMatch = /content-type:\s*([^\r\n;]+)/i.exec(headers);
+        const type = typeMatch ? typeMatch[1].trim() : 'application/octet-stream';
+        if (body.length) return { body: Buffer.from(body), contentType: type };
+        return { body: PNG_FALLBACK, contentType: 'image/png' };
+      }
+    }
+    from = next;
+  }
+  return { body: PNG_FALLBACK, contentType: 'image/png' };
+}
+
+async function handleStorage(req, res, url) {
+  const pathname = decodeURIComponent(url.pathname);
+
+  // POST /storage/v1/object/photos/<key> — multipart upload.
+  if (req.method === 'POST' && pathname.startsWith('/storage/v1/object/photos/')) {
+    const token = bearerToken(req);
+    const userId = token ? (accessTokens.get(token) ?? null) : null;
+    if (!userId) {
+      return sendJson(req, res, 400, { statusCode: '401', error: 'Unauthorized', message: 'Invalid JWT' });
+    }
+    const key = pathname.slice('/storage/v1/object/photos/'.length);
+    if (!key) return sendJson(req, res, 400, { statusCode: '400', error: 'InvalidKey' });
+    const raw = await readRaw(req);
+    if (objects.has(key)) {
+      return sendJson(req, res, 400, {
+        statusCode: '409',
+        error: 'Duplicate',
+        message: 'The resource already exists',
+      });
+    }
+    const file = extractUploadedFile(req, raw);
+    objects.set(key, file);
+    overlayFor(token).uploads.push({ key, size: file.body.length, contentType: file.contentType });
+    return sendJson(req, res, 200, { Key: `photos/${key}`, Id: `obj-${++idSeq}` });
+  }
+
+  // POST /storage/v1/object/sign/photos[/<key>] — single or batch signing.
+  if (req.method === 'POST' && pathname.startsWith('/storage/v1/object/sign/photos')) {
+    const token = bearerToken(req);
+    const userId = token ? (accessTokens.get(token) ?? null) : null;
+    if (!userId) {
+      return sendJson(req, res, 400, { statusCode: '401', error: 'Unauthorized', message: 'Invalid JWT' });
+    }
+    const body = await readJson(req);
+    const expiresIn = Number(body.expiresIn ?? 3600);
+    const rest = pathname.slice('/storage/v1/object/sign/photos'.length).replace(/^\//, '');
+
+    const signOne = (key) => {
+      signedSeq += 1;
+      const ref = `mock-signed-${signedSeq}`;
+      signedRefs.set(ref, { key, expiresAt: Date.now() + expiresIn * 1000 });
+      return `/object/sign/photos/${key.split('/').map(encodeURIComponent).join('/')}?token=${ref}`;
+    };
+
+    if (rest) return sendJson(req, res, 200, { signedURL: signOne(rest) });
+    const paths = Array.isArray(body.paths) ? body.paths : [];
+    const answer = paths.map((key) =>
+      objects.has(key)
+        ? { path: key, signedURL: signOne(key) }
+        : { path: key, error: 'Object not found' },
+    );
+    return sendJson(req, res, 200, answer);
+  }
+
+  // GET /storage/v1/object/sign/photos/<key>?token=… — signed download.
+  // `<img>` requests carry no Authorization header; the opaque token is the
+  // credential, exactly like a real signed URL.
+  if (req.method === 'GET' && pathname.startsWith('/storage/v1/object/sign/photos/')) {
+    const key = pathname.slice('/storage/v1/object/sign/photos/'.length);
+    const ref = url.searchParams.get('token');
+    const hit = ref ? signedRefs.get(ref) : null;
+    if (!hit || hit.key !== key || hit.expiresAt < Date.now()) {
+      return sendJson(req, res, 400, { statusCode: '400', error: 'InvalidSignature', message: 'invalid signature' });
+    }
+    const object = objects.get(key);
+    if (!object) {
+      return sendJson(req, res, 400, { statusCode: '404', error: 'NotFound', message: 'Object not found' });
+    }
+    return sendBinary(req, res, 200, object.body, object.contentType);
+  }
+
+  // DELETE /storage/v1/object/photos — remove objects by prefix.
+  if (req.method === 'DELETE' && pathname === '/storage/v1/object/photos') {
+    const token = bearerToken(req);
+    const userId = token ? (accessTokens.get(token) ?? null) : null;
+    if (!userId) {
+      return sendJson(req, res, 400, { statusCode: '401', error: 'Unauthorized', message: 'Invalid JWT' });
+    }
+    const body = await readJson(req);
+    const prefixes = Array.isArray(body.prefixes) ? body.prefixes : [];
+    const removed = [];
+    for (const key of prefixes) {
+      objects.delete(key);
+      overlayFor(token).removals.push({ key });
+      removed.push({ name: key, bucket_id: 'photos' });
+    }
+    return sendJson(req, res, 200, removed);
+  }
+
+  return sendJson(req, res, 404, { statusCode: '404', error: 'NotFound', message: `No mock route: ${req.method} ${pathname}` });
 }
 
 /* -------------------------------- mock API ------------------------------- */
@@ -621,6 +1193,73 @@ async function handleMock(req, res, url) {
     });
   }
 
+  /*
+   * Everything the account changed through people / deletion_requests /
+   * storage, merged across its session overlays (each sign-in starts a fresh
+   * overlay; parallel projects sign in separately). Assert with `some`/
+   * `find` — another test signed in as the same fixture may run at the same
+   * time and legitimately add its own writes.
+   */
+  if (req.method === 'GET' && path === '/__mock/writes') {
+    // Token-scoped view: exactly the writes of one browser session (the app's
+    // access token is readable from localStorage) — race-free assertions even
+    // while parallel tests run as the same fixture account.
+    const tokenParam = url.searchParams.get('token');
+    if (tokenParam) {
+      const uid = accessTokens.get(tokenParam);
+      const tokenUser = uid ? findUserById(uid) : null;
+      if (!tokenUser) return sendJson(req, res, 404, { error: 'Unknown session token' });
+      const one = overlays.get(tokenParam) ?? {
+        people: new Map(),
+        audit: [],
+        deletionRequests: [],
+        inserts: [],
+        patches: [],
+        uploads: [],
+        removals: [],
+      };
+      return sendJson(req, res, 200, {
+        email: tokenUser.email,
+        people: [...one.people.values()],
+        audit: one.audit,
+        deletionRequests: one.deletionRequests,
+        inserts: one.inserts,
+        patches: one.patches,
+        uploads: one.uploads,
+        removals: one.removals,
+      });
+    }
+
+    const user = findUserByEmail(url.searchParams.get('email'));
+    if (!user) return sendJson(req, res, 404, { error: 'Unknown fixture' });
+    const merged = {
+      email: user.email,
+      people: [],
+      audit: [],
+      deletionRequests: [],
+      inserts: [],
+      patches: [],
+      uploads: [],
+      removals: [],
+    };
+    const seen = new Set();
+    for (const [token, overlay] of overlays) {
+      if (accessTokens.get(token) !== user.id) continue;
+      for (const row of overlay.people.values()) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        merged.people.push(row);
+      }
+      merged.audit.push(...overlay.audit);
+      merged.deletionRequests.push(...overlay.deletionRequests);
+      merged.inserts.push(...overlay.inserts);
+      merged.patches.push(...overlay.patches);
+      merged.uploads.push(...overlay.uploads);
+      merged.removals.push(...overlay.removals);
+    }
+    return sendJson(req, res, 200, merged);
+  }
+
   // Make the next N people reads for one account fail — the load-error banner
   // needs a real 500, scoped to a dedicated fixture account so parallel tests
   // can never consume the failure.
@@ -640,15 +1279,17 @@ async function handleMock(req, res, url) {
 
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? `${HOST}:${PORT}`}`);
-  if (req.method === 'OPTIONS') return sendNoContent(req, res);
+  if (req.method === 'OPTIONS') return sendEmpty(req, res);
 
   const route = url.pathname.startsWith('/auth/v1/')
     ? handleAuth
     : url.pathname.startsWith('/rest/v1/')
       ? handleRest
-      : url.pathname.startsWith('/__mock/')
-        ? handleMock
-        : null;
+      : url.pathname.startsWith('/storage/v1/')
+        ? handleStorage
+        : url.pathname.startsWith('/__mock/')
+          ? handleMock
+          : null;
 
   const done = route
     ? route(req, res, url)

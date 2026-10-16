@@ -14,7 +14,7 @@ test that exercised it.
 | A1 | Sign in (email + password) | Gate blocks the app; friendly errors; show/hide password (`js/auth.js`) | **done** (Phase 2 — E2E success/failure/empty fields/retry, unit error mapping + controller lifecycle) |
 | A2 | Forgot password → reset email | `resetPasswordForEmail` with redirect back to the app (`js/auth.js`) | **done** (Phase 2 — E2E: request confirmed, back to sign-in; the mock accepts `recover` and sends no mail, so real delivery is untested) |
 | A3 | Invitation / recovery link → set password | `type=invite\|recovery` detected before supabase-js strips the URL; expired link message (`js/supabase.js`, `js/auth.js`) | **done** (Phase 2 — E2E invite-link flow + expired-link notice; unit: `PASSWORD_RECOVERY` event, URL strip, sentinels; the recovery e-mail round-trip itself is untested) |
-| A4 | Sign out clears all data | `clearTree()` wipes model, panel, table, channel, photo cache (`js/app.js`) | **in progress** (Phases 2–3 — session, profile and chip cleared, and the tree workspace (model, renderer, panzoom) is disposed on sign-out; reload stays signed out (E2E). The photo cache arrives with photos in Phase 4) |
+| A4 | Sign out clears all data | `clearTree()` wipes model, panel, table, channel, photo cache (`js/app.js`) | **in progress** (Phases 2–4 — session, profile and chip cleared, the tree workspace (model, renderer, panzoom) is disposed on sign-out, and the photo URL cache is keyed to the session user and dropped when the user changes; reload stays signed out (E2E). The realtime channel does not exist yet — it arrives with realtime in Phase 5 and must be disposed too) |
 | A5 | Inactive account handling | Profile with `active=false` → signed out with explanation; invite links exempt until password set (`js/auth.js`) | **done** (Phase 2 — E2E: inactive + missing profile → quiet sign-out with notice, workspace hidden, survives reload; inactive invitee gets the notice after setting a password) |
 | A6 | Own profile edit | Full name + language saved to `profiles` (`js/auth.js`) | **done** (Phase 2 — E2E: name + language persist, interface flips RTL, both survive reload) |
 | A7 | No public sign-up | Supabase `disable_signup: true`, verified live in Phase 0 | n/a (config — re-checked in Phase 2: the gate offers no sign-up path) |
@@ -24,8 +24,8 @@ test that exercised it.
 | # | Feature | Reference behaviour (source) | Status |
 | --- | --- | --- | --- |
 | B1 | Admin role | Everything, incl. accounts, import, restore (`01_schema.sql`, UI in `js/admin.js`) | **in progress** (Phase 2 — role parsed from the profile, admin tag in the chip, admin-only copy in the profile dialog; the admin panel arrives in Phase 5) |
-| B2 | Editor role, branch-limited | `branch_access` anchors; edit = anchor + descendants; mirrors DB `can_edit_person()` in UI (`js/auth.js`) | **in progress** (Phases 2–3 — `branch_access` loaded for editors, `canEditPerson()` mirrors the DB rule (unit-tested); the workspace renders role-appropriate controls (the editor never sees the deleted toggle, E2E); write flows arrive in Phase 4) |
-| B3 | DB-enforced, not UI-only | All rules in RLS + triggers; UI only hides buttons | **in progress** (Phase 2 — the mock re-implements the RLS refusals the UI must handle; live enforcement is re-exercised in Phase 7) |
+| B2 | Editor role, branch-limited | `branch_access` anchors; edit = anchor + descendants; mirrors DB `can_edit_person()` in UI (`js/auth.js`) | **in progress** (Phases 2–4 — `branch_access` loaded for editors, `canEditPerson()` mirrors the DB rule (unit-tested); the workspace renders role-appropriate controls (the editor never sees the deleted toggle, E2E); editor write flows are live: add child / edit / add spouse from the branch workspace and a deletion request from the sheet (E2E, mock). Reaching outside the branch is prevented by rendering and enforced by the mock's RLS; a live refusal check awaits Phase 7) |
+| B3 | DB-enforced, not UI-only | All rules in RLS + triggers; UI only hides buttons | **in progress** (Phases 2–4 — the mock re-implements the RLS refusals and the Phase 4 write triggers (whitelist, admin-only guard, path cascade, audit) the UI must handle; the E2E write assertions check the raw request bodies the client sent; live enforcement is re-exercised in Phase 7) |
 
 ## Tree
 
@@ -54,32 +54,32 @@ test that exercised it.
 | D2 | Relatives with navigation (parent, siblings, children) | `relBtns` → `select(goto)` | **done** (Phase 3 — a relative button moves the selection and pulses the target card (E2E); panels never render a whole list into the tree) |
 | D3 | Localized-name sections (ur/hi) | panel sections | **done** (Phase 3 — every name goes through `getDisplayName()` (Urdu/Hindi preferred, never the wrong script); unit tests + the Urdu visual review) |
 | D4 | Last edited + who (audit, admin) | `hydrateLastEdited()` | **done** (Phase 3 — admins get the newest `audit_log` row merged into the Record line; E2E asserts "by Family Admin"; non-admins keep the plain timestamp) |
-| D5 | Photo view / upload / replace / remove / lightbox | panel + `js/photos.js` | planned |
-| D6 | Actions: add child, edit, add root (admin), request deletion (editor), soft delete / restore (admin) | action bar | planned |
+| D5 | Photo view / upload / replace / remove / lightbox | panel + `js/photos.js` | **done** (Phase 4 — signed thumbnail in the sheet, upload / replace / remove, zoom lightbox (Escape or backdrop closes); E2E: the upload reaches the card (batch signer) and the panel, remove clears the row reference and deletes the object, the form's own picker/Remove control works through the same save; unit tests cover validation, the signing cache, upload/remove ordering and rollback) |
+| D6 | Actions: add child, edit, add root (admin), request deletion (editor), soft delete / restore (admin) | action bar | **done** (Phase 4 — role-gated action bar; every action has an E2E: add child (editor tile + admin sheet), edit, add root, request deletion, soft delete with the living-descendant refusal, restore, show history) |
 
 ## Creating and editing
 
 | # | Feature | Reference behaviour (source) | Status |
 | --- | --- | --- | --- |
-| E1 | One shared add/edit dialog, sectioned | `js/personform.js` | planned |
-| E2 | Field whitelist on write; update sends only changed fields | `ALL_FIELDS` + diff | planned |
-| E3 | Parent assignment: read-only for editors, searchable picker for admins | `parentBlockHtml()` | planned |
-| E4 | Validation: name + gender required, future dates, death-before-birth | `validate()` | planned |
-| E5 | Duplicate name+parent warning (warn, never block) | `duplicateOf()` | planned |
-| E6 | New child defaults father/mother from parent + spouse | `valuesForNewChild()` | planned |
-| E7 | Photo picked in form: 800 px resize, 3 MB limit, upload after save | `Photos.prepareFile` | planned |
-| E8 | Remove stored photo (delete object after row updated) | `photos.js` `remove()` | planned |
-| E9 | Add spouse (text fields through the same form) | branch tile action + form | planned |
+| E1 | One shared add/edit dialog, sectioned | `js/personform.js` | **done** (Phase 4 — one dialog for add child / add root / edit with sections Names / Parents / Spouse / Life events / Notes + photo; the E2E drives all three modes and the duplicate warning stacking over it) |
+| E2 | Field whitelist on write; update sends only changed fields | `ALL_FIELDS` + diff | **done** (Phase 4 — a 17-column whitelist in `people.ts`; UPDATE bodies are asserted exactly in E2E (e.g. `{ nick_name, qualification }`); the mock refuses unknown columns like PostgREST does; `parent_id` changes only through an admin move) |
+| E3 | Parent assignment: read-only for editors, searchable picker for admins | `parentBlockHtml()` | **done** (Phase 4 — editors see the parent read-only, admins get a searchable picker whose choice writes `parent_id`; E2E: the move patch is exactly `{ parent_id }`) |
+| E4 | Validation: name + gender required, future dates, death-before-birth | `validate()` | **done** (Phase 4 — inline field errors + one toast and nothing written (E2E); the date rules are unit-tested) |
+| E5 | Duplicate name+parent warning (warn, never block) | `duplicateOf()` | **done** (Phase 4 — the warning stacks over the still-open form; cancel keeps everything, confirm saves (E2E both ways); the finder is unit-tested) |
+| E6 | New child defaults father/mother from parent + spouse | `valuesForNewChild()` | **done** (Phase 4 — unit-tested, including the unknown-gender guess; the editor E2E asserts the defaults reach the insert) |
+| E7 | Photo picked in form: 800 px resize, 3 MB limit, upload after save | `Photos.prepareFile` | **done** (Phase 4 — picker with preview inside the dialog; the file is downscaled to 800 px, capped at 3 MB and uploaded after the row is saved; E2E: choose → save → re-open → remove) |
+| E8 | Remove stored photo (delete object after row updated) | `photos.js` `remove()` | **done** (Phase 4 — the row is cleared first, the object second (best effort); E2E records both the `{ photo_path: null }` patch and the object deletion) |
+| E9 | Add spouse (text fields through the same form) | branch tile action + form | **done** (Phase 4 — "Add a spouse" opens the same form; E2E writes exactly `{ spouse_name }`; the button hides when a spouse exists) |
 
 ## Deletion, history, restoration
 
 | # | Feature | Reference behaviour (source) | Status |
 | --- | --- | --- | --- |
-| F1 | Editor files a deletion request with a reason | `deletion_requests` insert | planned |
+| F1 | Editor files a deletion request with a reason | `deletion_requests` insert | **done** (Phase 4 — the dialog requires the reason; E2E asserts the row shape `{ person_id, reason, status: 'pending' }`; the admin queue is F2, Phase 5) |
 | F2 | Admin queue approves/rejects; approve soft-deletes | admin tab | planned |
-| F3 | Admin soft-delete / restore from the panel | `is_deleted` update | planned |
-| F4 | Living-descendant guard on soft delete | client rule | planned |
-| F5 | Change history with field diffs + restore a version | `audit_log` read + replay | planned |
+| F3 | Admin soft-delete / restore from the panel | `is_deleted` update | **done** (Phase 4 — E2E: a childless person is deleted and restored, the patch log is exactly `is_deleted` true → false; the buttons are admin-only even with `#show-deleted` on) |
+| F4 | Living-descendant guard on soft delete | client rule | **done** (Phase 4 — the refusal dialog carries the computed descendant / living counts (E2E: 9 / 8) and nothing is written; it walks the visible model exactly like the reference — a documented simplification) |
+| F5 | Change history with field diffs + restore a version | `audit_log` read + replay | **done** (Phase 4 — newest-first (limit 200), rows expand to labelled field diffs, "Restore this version" only on update rows that carry `old_data`; the E2E restores and asserts the exact write; `restorePayloadFromAudit` is unit-tested including the admin-only parent) |
 | F6 | Recently deleted list + restore | admin tab | planned |
 
 ## Search, filters, table
@@ -110,7 +110,7 @@ test that exercised it.
 
 | # | Feature | Reference behaviour (source) | Status |
 | --- | --- | --- | --- |
-| I1 | Private bucket, per-person folder, signed URLs, cache, batch signing | `js/photos.js`, `03_storage.sql` | planned |
+| I1 | Private bucket, per-person folder, signed URLs, cache, batch signing | `js/photos.js`, `03_storage.sql` | **done** (Phase 4 — private `photos` bucket, keys `<person-uuid>/<file>`, signed URLs (TTL 3600 s) with an in-memory cache and a batch signer for tree cards, 3 MB cap + 800 px downscale before upload; E2E: upload → card + panel, lightbox, remove; the mock mirrors object presence on signed reads) |
 
 ## Languages
 
@@ -118,7 +118,7 @@ test that exercised it.
 | --- | --- | --- | --- |
 | J1 | English / Urdu / Hindi, 617 keys each, English fallback | `js/i18n.js` | **done** (Phase 1 — engine + generated dictionaries, parity tests in `tests/unit/dicts.test.ts`, `i18n.test.ts`; views consume `t()` as they land) |
 | J2 | Localized displayed names (ur/hi with English fallback) | `dispName()` | **done** (Phase 1 — shared `getDisplayName()` in `src/core/i18n/display.ts`, tested) |
-| J3 | RTL layout for Urdu; tree canvas stays LTR | `dir=rtl`, logical CSS | **in progress** (Phases 1–3 — the document, gate, header, toolbar, sidebar and details sheet flip RTL; the tree stage keeps `dir=ltr` so the genealogy stays left-to-right; boot specs assert the canvas direction and the Urdu workspace was confirmed in the visual review) |
+| J3 | RTL layout for Urdu; tree canvas stays LTR | `dir=rtl`, logical CSS | **in progress** (Phases 1–4 — the document, gate, header, toolbar, sidebar and details sheet flip RTL; the tree stage keeps `dir=ltr` so the genealogy stays left-to-right; boot specs assert the canvas direction, the Urdu workspace was confirmed in the visual review, and a Phase 4 RTL pass spot-checked the new form, history box and branch workspace (screenshot review; a native-speaker copy review is still pending)) |
 | J4 | Lazy per-language fonts (Naskh/Nastaliq/Devanagari) | `loadFonts()` | **done** (Phase 1 — on-demand stylesheet loading, tested) |
 | J5 | Language persisted in profile + localStorage; re-render on change | `setLanguage()` + `i18n:change` | **done** (Phases 1–2 — localStorage persistence + `i18n:change` re-render hook; a signed-in header choice is written to `profiles`, and the saved profile language wins at boot; E2E both directions) |
 
@@ -126,12 +126,12 @@ test that exercised it.
 
 | # | Feature | Reference behaviour (source) | Status |
 | --- | --- | --- | --- |
-| K1 | Editor lands in branch workspace after sign-in | `js/branch.js` | planned |
-| K2 | Anchor shown; multi-branch chooser | workspace | planned |
-| K3 | Completeness per person, live from saved fields | `completeness()` | planned |
-| K4 | Progress bar, all/missing/done filters, next-incomplete | workspace | planned |
-| K5 | Tile actions: edit details, add child, add spouse | workspace | planned |
-| K6 | No valid assignment → clear message, never wider access | workspace | planned |
+| K1 | Editor lands in branch workspace after sign-in | `js/branch.js` | **done** (Phase 4 — an active editor lands in the branch workspace at sign-in (E2E); admins always land in the tree and never see the branch tab) |
+| K2 | Anchor shown; multi-branch chooser | workspace | **done** (Phase 4 — the hero shows the assigned anchor (name + birth date, E2E); several assignments render a chooser that switches the grid (E2E with a two-branch fixture)) |
+| K3 | Completeness per person, live from saved fields | `completeness()` | **done** (Phase 4 — counts only really-saved fields (unit-tested); the E2E stats read 10 / 0 / 10 for the fixture branch) |
+| K4 | Progress bar, all/missing/done filters, next-incomplete | workspace | **done** (Phase 4 — progress bar with the "N of M people look complete" line, All / Needs details / Complete segment counts, "Next person with gaps" jumps and toasts; E2E) |
+| K5 | Tile actions: edit details, add child, add spouse | workspace | **done** (Phase 4 — Add details (edit), Add child and Add a spouse when there is none; all three E2E-exercised and gated by `canEdit`) |
+| K6 | No valid assignment → clear message, never wider access | workspace | **done** (Phase 4 — an active editor with no assignment sees the honest hero and can open the tree (E2E); stale anchor ids are dropped quietly) |
 
 ## Tools (Extras)
 
@@ -151,8 +151,8 @@ test that exercised it.
 | M3 | Realtime updates (people channel) + 60 s poll fallback | `startLiveUpdates()` | planned |
 | M4 | Manual refresh keeping selection | `syncFromServer()` | planned |
 | M5 | Mobile filter drawer, 360 px usable | drawer | **done** (Phase 3 — the sidebar becomes a drawer under 980 px with a backdrop and a toolbar toggle; opened in E2E on the Pixel 7 project and reviewed as a screenshot; the 360 px worst case is swept in Phase 6) |
-| M6 | Accessibility: focus rings, keyboard, aria labels, reduced motion | partly present | **in progress** (Phases 1–3.5 — focus-visible rings, modal focus trap + restore, gate keyboard chain (E2E); tree cards are keyboard-reachable and Enter opens the sheet (E2E), toggles and zoom buttons carry labels, reduced-motion CSS is in place and the Phase 3.5 canvas tweens check the same preference in JS (`core/motion.ts`, unit-tested); per-view work continues) |
-| M7 | Toast + empty + loading + error states everywhere | yes | **in progress** (Phases 1–3 — toast host; gate loading/verifying/unavailable with a working retry; inline form messages; the tree has loading, an honest empty state, and a load-error banner with retry (E2E fault injection); view-level states continue in Phase 4) |
+| M6 | Accessibility: focus rings, keyboard, aria labels, reduced motion | partly present | **in progress** (Phases 1–4 — focus-visible rings, modal focus trap + restore, gate keyboard chain (E2E); tree cards are keyboard-reachable and Enter opens the sheet (E2E), toggles and zoom buttons carry labels, reduced-motion CSS is in place and the Phase 3.5 canvas tweens check the same preference in JS (`core/motion.ts`, unit-tested); Phase 4 adds the dialog stack (lower dialogs `inert`, focus restored per dialog, unit-tested) and labelled form + photo controls; per-view work continues) |
+| M7 | Toast + empty + loading + error states everywhere | yes | **in progress** (Phases 1–4 — toast host; gate loading/verifying/unavailable with a working retry; inline form messages; the tree has loading, an honest empty state, and a load-error banner with retry (E2E fault injection); Phase 4 adds form validation messages, save / photo / restore toasts, the branch loading + no-assignment states and photo empty states (E2E); view-level states continue in Phase 5) |
 
 ## Deliberately not carried over
 

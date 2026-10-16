@@ -22,4 +22,5 @@ export const SUPABASE_URL_IS_DEFAULT = !import.meta.env.VITE_SUPABASE_URL;
 export const STORAGE_KEYS = {
   theme: 'nahri.theme',
   lang: 'nahri.lang',
+  view: 'nahri.view',
 } as const;
