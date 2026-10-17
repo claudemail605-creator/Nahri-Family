@@ -16,7 +16,7 @@ import type { TreeModel } from '../tree/model';
 import type { Lang } from '../../core/types';
 import { h } from '../../ui/dom';
 import { openModal, type ModalHandle } from '../../ui/modal';
-import { renderUsersTab, renderBranchesTab, renderRequestsTab, renderDeletedTab, renderActivityTab } from './tabs';
+import { renderUsersTab, renderBranchesTab, renderRequestsTab, renderDeletedTab, renderActivityTab, renderImportTab } from './tabs';
 
 export interface AdminPanelDeps {
   i18n: I18n;
@@ -30,6 +30,8 @@ export interface AdminPanelDeps {
   getModel(): TreeModel;
   /** Workspace refetch after writes change the tree; optionally selects id. */
   reload(id?: string): Promise<void>;
+  /** Export to Excel (H7) — closes-path re-entry for the backup tab. */
+  exportExcel?(): void;
   toast(message: string): void;
 }
 
@@ -41,9 +43,11 @@ export interface AdminTabCtx {
   body: HTMLElement;
   /** Re-run the active tab (refresh queues / reload after a write). */
   refresh(): void;
+  /** Close the whole panel (the backup tab's export closes it, like the ref). */
+  close(): void;
 }
 
-type TabId = 'users' | 'branches' | 'requests' | 'deleted' | 'activity';
+type TabId = 'users' | 'branches' | 'requests' | 'deleted' | 'activity' | 'import';
 
 interface TabDef {
   id: TabId;
@@ -51,14 +55,14 @@ interface TabDef {
   render(ctx: AdminTabCtx): void;
 }
 
-/* The reference's tab order: users, then branch progress… Import & backup
-   lands in a later chunk of Phase 5 and joins at the end. */
+/* The reference's tab order: users, then branch progress, … import last. */
 const TABS: readonly TabDef[] = [
   { id: 'users', labelKey: 'admin.tab.users', render: renderUsersTab },
   { id: 'branches', labelKey: 'admin.tab.branches', render: renderBranchesTab },
   { id: 'requests', labelKey: 'admin.tab.requests', render: renderRequestsTab },
   { id: 'deleted', labelKey: 'admin.tab.deleted', render: renderDeletedTab },
   { id: 'activity', labelKey: 'admin.tab.activity', render: renderActivityTab },
+  { id: 'import', labelKey: 'admin.tab.import', render: renderImportTab },
 ];
 
 /**
@@ -98,12 +102,14 @@ export function openAdminPanel(deps: AdminPanelDeps, startTab: TabId = 'users'):
     tab.render(ctx);
   }
 
+  let handle: ModalHandle | null = null;
   const ctx: AdminTabCtx = {
     deps,
     i18n,
     lang: i18n.currentLang(),
     body,
     refresh: loadTab,
+    close: () => handle?.close(),
   };
 
   renderTabs();
@@ -125,7 +131,7 @@ export function openAdminPanel(deps: AdminPanelDeps, startTab: TabId = 'users'):
     loadTab();
   });
 
-  return openModal({
+  const opened = openModal({
     title: i18n.t('admin.title'),
     subtitle: i18n.t('admin.subtitle'),
     content: h('div', { class: 'admin-shell' }, tabsBar, body),
@@ -133,4 +139,6 @@ export function openAdminPanel(deps: AdminPanelDeps, startTab: TabId = 'users'):
     closeLabel: i18n.t('admin.close'),
     onClose: unsubscribeLang,
   });
+  handle = opened;
+  return opened;
 }

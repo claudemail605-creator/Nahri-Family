@@ -1,19 +1,29 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import * as XLSX from 'xlsx';
 import { en } from '../../src/core/i18n/dict.en';
 
 /*
- * Phase 5 (chunk B) — the admin panel against the mock Supabase server.
+ * Phase 5 (chunks B–D) — the admin panel against the mock Supabase server.
  *
  * Coverage:
  *   - B1: the header entry point is admin-only; the panel opens with the
- *     tabs shipped so far (branch progress, deletion requests, recently
- *     deleted, activity).
+ *     tabs shipped so far (users, branch progress, deletion requests,
+ *     recently deleted, activity, import & backup).
+ *   - H1–H3: the users tab — invite with branch review, edit with
+ *     confirms, deactivate/activate, resend, temporary password.
  *   - H4: branch progress computed live from the fixtures (person-a branch
  *     holds 10 people, none complete; person-l's subtree adds 3).
  *   - F2: approve soft-deletes the person + resolves the request; reject
  *     leaves the person untouched. Both flows assert the real writes.
  *   - F6: the soft-deleted fixture person restores back into their place.
  *   - H5: the activity feed shows field diffs and honours the filters.
+ *   - H7: Excel export from the header and the backup tab.
+ *   - H8: the JSON backup downloads every table.
+ *   - H6: the .xlsx import with problems preview, parents-first inserts
+ *     and the update-existing pass — all writes asserted via the journals.
  *
  * Races: deletion_requests is a global table in the mock (admins read every
  * session's requests), so assertions are always scoped through the person
@@ -77,7 +87,7 @@ async function openAdminPanel(page: Page): Promise<void> {
 
 async function openTab(
   page: Page,
-  id: 'users' | 'branches' | 'requests' | 'deleted' | 'activity',
+  id: 'users' | 'branches' | 'requests' | 'deleted' | 'activity' | 'import',
 ): Promise<void> {
   await page.locator(`.admin-tab[data-tab="${id}"]`).click();
 }
@@ -132,23 +142,26 @@ async function expectToast(page: Page, text: string): Promise<void> {
   await expect(page.locator('#toast-host .toast__message').last()).toHaveText(text);
 }
 
-test('only admins get the admin button and the panel opens with the tabs', async ({ page }) => {
-  // The editor's header has no admin entry point (B1).
+test('only admins get the admin and export buttons; the panel opens with the tabs', async ({ page }) => {
+  // The editor's header has no admin entry point and no export (B1, H7).
   await signInAs(page, 'editor@example.test');
   await expect(page.locator('#btn-admin')).toBeHidden();
+  await expect(page.locator('#btn-export')).toBeHidden();
 
   // Switch accounts and check the panel itself.
   await page.locator('#sign-out').click();
   await signInAs(page, 'admin@example.test');
+  await expect(page.locator('#btn-export')).toBeVisible();
   await openAdminPanel(page);
 
   const panel = page.locator('.admin-modal');
-  const expected: Array<['users' | 'branches' | 'requests' | 'deleted' | 'activity', string]> = [
+  const expected: Array<['users' | 'branches' | 'requests' | 'deleted' | 'activity' | 'import', string]> = [
     ['users', en['admin.tab.users']],
     ['branches', en['admin.tab.branches']],
     ['requests', en['admin.tab.requests']],
     ['deleted', en['admin.tab.deleted']],
     ['activity', en['admin.tab.activity']],
+    ['import', en['admin.tab.import']],
   ];
   for (const [id, label] of expected) {
     await expect(panel.locator(`.admin-tab[data-tab="${id}"]`)).toHaveText(label);
@@ -604,5 +617,153 @@ test('resend e-mail and a temporary password go through the function', async ({ 
     writes.functions.some((call) => call.action === 'set_password' && call.body.password === 'test-password-9'),
   ).toBe(true);
   expect(writes.functions.some((call) => call.action === 'resend')).toBe(true);
+});
+
+/* ------------------------------ chunk D: import & backup -------------------- */
+
+/**
+ * Builds an .xlsx in the original 16-column layout into a fresh temp dir and
+ * returns its path. The default file carries a valid parent row, a valid
+ * child row with a bad gender, and a duplicate of the parent id — three
+ * rows, two problems, TWO importable people: the duplicated id is reported
+ * and then de-duplicated by the parents-first ordering (reference
+ * behavior). `updatesOnly` carries the parent id with a new name for the
+ * update-existing pass.
+ */
+function buildImportFile(project: string, updatesOnly: boolean): string {
+  const slug = project.replace(/[^a-z0-9]/gi, '-');
+  const headers = [
+    'Individual_ID', 'Parent_ID', 'Generation', 'Gender', 'Full_Name', 'Nick_Name',
+    'Fathers_Name', 'Mothers_Name', 'Spouse_Name', 'Spouse_Father_Name', 'DOB',
+    'Place_of_Birth', 'Qualification', 'Date_of_Death', 'Place_of_Burial', 'Source_File',
+    'Name_Urdu', 'Name_Hindi',
+  ];
+  const base = (id: string, parent: string, gender: string, name: string): string[] => [
+    id, parent, '', gender, name, '', '', '', '', '', '01/03/1970', 'Lahore', '', '', '', 'spec', '', '',
+  ];
+  const rows = updatesOnly
+    ? [base(`IMPA-${slug}`, '', 'Male', `Imported Root updated (${slug})`)]
+    : [
+        base(`IMPA-${slug}`, '', 'Male', `Imported Root (${slug})`),
+        base(`IMPB-${slug}`, `IMPA-${slug}`, 'Other', `Imported Child (${slug})`),
+        base(`IMPA-${slug}`, '', 'Male', `Imported Dup (${slug})`),
+      ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([headers, ...rows]), 'Family_Data');
+  const file = join(mkdtempSync(join(tmpdir(), 'nahri-import-')), `import-${slug}.xlsx`);
+  writeFileSync(file, XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
+  return file;
+}
+
+test('export to Excel works from the header and the backup tab (H7)', async ({ page }) => {
+  await signInAs(page, 'admin@example.test');
+
+  // Header entry point: the workspace model's people (13 visible; the
+  // soft-deleted person returns only for restore views, so backups carry 14).
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#btn-export').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^Nahri_Family_\d{4}-\d{2}-\d{2}\.xlsx$/);
+  await expectToast(page, t('export.done', { n: 13 }));
+
+  // The backup tab's button closes the panel first, then exports.
+  await openAdminPanel(page);
+  await openTab(page, 'import');
+  const secondPromise = page.waitForEvent('download');
+  await page.locator('#bk_xlsx').click();
+  expect((await secondPromise).suggestedFilename()).toMatch(/^Nahri_Family_\d{4}-\d{2}-\d{2}\.xlsx$/);
+  await expect(page.locator('.admin-modal')).toHaveCount(0);
+  await expectToast(page, t('export.done', { n: 13 }));
+});
+
+test('JSON backup downloads every table with an honest toast (H8)', async ({ page }) => {
+  await signInAs(page, 'admin@example.test');
+  await openAdminPanel(page);
+  await openTab(page, 'import');
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#bk_json').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/^Nahri_Family_Backup_\d{4}-\d{2}-\d{2}\.json$/);
+
+  const payload = JSON.parse(readFileSync(await download.path(), 'utf8')) as {
+    exported_at: string;
+    app: string;
+    people: Array<{ full_name: string | null }>;
+    profiles: Array<{ full_name: string | null }>;
+    branch_access: unknown[];
+    deletion_requests: unknown[];
+    audit_log: Array<Record<string, unknown>>;
+  };
+  expect(payload.app).toBe('Nahri-Family');
+  expect(typeof payload.exported_at).toBe('string');
+  expect(payload.people.some((p) => p.full_name === 'Amir Fixture')).toBe(true);
+  expect(payload.profiles.some((p) => p.full_name === 'Family Admin')).toBe(true);
+  expect(Array.isArray(payload.branch_access)).toBe(true);
+  expect(Array.isArray(payload.deletion_requests)).toBe(true);
+  expect(payload.audit_log.length).toBeGreaterThan(0);
+  await expectToast(page, t('admin.backupDone', { n: payload.people.length }));
+});
+
+test('Excel import previews problems, writes parents-first and updates (H6)', async ({ page, request }, testInfo) => {
+  const slug = testInfo.project.name.replace(/[^a-z0-9]/gi, '-');
+  const rootName = `Imported Root (${slug})`;
+  await signInAs(page, 'admin@example.test');
+  await openAdminPanel(page);
+  await openTab(page, 'import');
+  const body = page.locator('.admin-modal .admin-body');
+
+  // Nothing is written before the preview is confirmed. The duplicate id
+  // reads as 2 people — reported, then dropped by the reference's ordering.
+  await page.locator('#im_file').setInputFiles(buildImportFile(testInfo.project.name, false));
+  await expect(body.locator('#im_status')).toHaveText(
+    `${t('admin.importRows', { n: 2 })} · import-${slug}.xlsx`,
+  );
+  await expect(body.locator('.import-problems h5')).toHaveText(t('admin.importProblems', { n: 2 }));
+  await expect(body.locator('.import-problems')).toContainText(
+    t('admin.importBadGender', { id: `IMPB-${slug}`, value: 'Other' }),
+  );
+  await expect(body.locator('.import-problems')).toContainText(t('admin.importDup', { id: `IMPA-${slug}`, n: 2 }));
+  await expect(body.locator('.import-preview')).toContainText(`Imported Child (${slug})`);
+
+  await body.locator('#im_run').click();
+  const dialog = page.locator('.modal-backdrop').last();
+  await expect(dialog.locator('.modal__text')).toHaveText(t('admin.importConfirm'));
+  await dialog.locator('.btn--danger').click();
+  await expectToast(page, t('admin.importDone', { added: 2, updated: 0 }));
+
+  // The workspace reloads: both people are in the tree; find the parent.
+  await page.locator('#tree-search').fill(rootName);
+  await expect(page.locator('#result-count')).toHaveText(
+    t('table.resultCount.filtered', { shown: 1, n: 15 }),
+  );
+  await expect(page.locator('#tree-world .pcard', { hasText: rootName })).toBeVisible();
+
+  // The real writes: two inserts; the child points at the parent's NEW uuid.
+  const writes = await sessionWrites(page, request);
+  const parentInsert = writes.inserts.find((w) => w.values.legacy_id === `IMPA-${slug}`);
+  const childInsert = writes.inserts.find((w) => w.values.legacy_id === `IMPB-${slug}`);
+  expect(parentInsert?.values.parent_id ?? null).toBeNull();
+  expect(childInsert?.values.parent_id).toBeTruthy();
+  expect(String(childInsert?.values.parent_id)).not.toBe(`IMPA-${slug}`);
+  expect(writes.inserts.some((w) => w.values.legacy_id === `IMPA-${slug}` && w.values.full_name === rootName)).toBe(true);
+
+  // A second file with the same id updates when the box is ticked.
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.admin-modal')).toHaveCount(0);
+  await openAdminPanel(page);
+  await openTab(page, 'import');
+  await page.locator('#im_file').setInputFiles(buildImportFile(testInfo.project.name, true));
+  await body.locator('#im_update').check();
+  await body.locator('#im_run').click();
+  const confirm = page.locator('.modal-backdrop').last();
+  await expect(confirm.locator('.modal__text')).toHaveText(t('admin.importConfirm'));
+  await confirm.locator('.btn--danger').click();
+  await expectToast(page, t('admin.importDone', { added: 0, updated: 1 }));
+
+  const after = await sessionWrites(page, request);
+  expect(
+    after.patches.some((p) => p.body.full_name === `Imported Root updated (${slug})`),
+  ).toBe(true);
 });
 

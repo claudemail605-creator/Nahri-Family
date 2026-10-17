@@ -29,6 +29,7 @@
     "vitest": "^5.0.5"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.118.0"
+    "@supabase/supabase-js": "^2.118.0",
+    "xlsx": "^0.18.5"
   }
 }

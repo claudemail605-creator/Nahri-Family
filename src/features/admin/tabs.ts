@@ -14,11 +14,13 @@ import type { ProfileRow } from '../../data/auth';
 import {
   EMPTY_ACTIVITY_FILTER,
   fetchActivity,
+  fetchBackup,
   fetchBranchAccess,
   fetchDeletionRequests,
   fetchLastSignInTimes,
   fetchProfiles,
   fetchRecentlyDeleted,
+  importPeople,
   inviteAccount,
   resendAccountEmail,
   replaceBranchAccess,
@@ -30,12 +32,14 @@ import {
   type ActivityFilter,
   type AdminUserRow,
   type DeletionRequestRow,
+  type ImportRow,
   type RecentlyDeletedRow,
 } from '../../data/admin';
 import { setPersonDeleted } from '../../data/people';
 import { branchPeopleOf, completeness } from '../tree/branch';
 import { fieldDiffs } from '../tree/fields';
 import type { Person } from '../tree/model';
+import { IMPORT_SHEET, parseSheet } from './importer';
 import { h } from '../../ui/dom';
 import { openModal } from '../../ui/modal';
 import { confirmDialog } from '../../ui/confirm';
@@ -1207,4 +1211,228 @@ export function renderActivityTab(ctx: AdminTabCtx): void {
   }
 
   void run();
+}
+
+/* --------------------------- import and backup ------------------------------ */
+
+/** The tab's picked-file state survives tab switches, per panel instance. */
+interface ImportState {
+  rows: ImportRow[] | null;
+  problems: string[];
+  fileName: string | null;
+}
+
+const importState = new WeakMap<AdminTabCtx, ImportState>();
+
+function importStatusText(
+  ctx: AdminTabCtx,
+  state: ImportState,
+): string {
+  const T = t(ctx);
+  if (!state.rows) return '';
+  const base = T('admin.importRows', { n: state.rows.length });
+  return state.fileName ? `${base} · ${state.fileName}` : base;
+}
+
+/**
+ * Import and backup (H6–H8): read the original spreadsheet layout, preview
+ * it with every problem found, import on confirm — and download a full JSON
+ * backup, or hand off to the workspace's Excel exporter.
+ */
+export function renderImportTab(ctx: AdminTabCtx): void {
+  const T = t(ctx);
+  const state = importState.get(ctx) ?? { rows: null, problems: [], fileName: null };
+  const statusEl = h('span', { class: 'admin-note', id: 'im_status', text: importStatusText(ctx, state) });
+
+  const fileInput = h('input', { type: 'file', id: 'im_file', accept: '.xlsx,.xls', hidden: true });
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0] ?? null;
+    void onImportFile(ctx, file);
+  });
+
+  const pickRow = h(
+    'div',
+    { class: 'admin-bar' },
+    h('button', { type: 'button', class: 'btn btn--ghost', id: 'im_pick', onclick: () => fileInput.click() }, T('admin.importPick')),
+    statusEl,
+  );
+
+  const sections: HTMLElement[] = [
+    h(
+      'div',
+      { class: 'admin-section' },
+      h('h5', { text: T('admin.importTitle') }),
+      h('p', { class: 'admin-note', text: T('admin.importSub') }),
+      pickRow,
+      fileInput,
+    ),
+  ];
+
+  if (state.rows) {
+    const problemPart = state.problems.length
+      ? h(
+          'div',
+          { class: 'import-problems' },
+          h('h5', { text: T('admin.importProblems', { n: state.problems.length }) }),
+          h('ul', {}, ...state.problems.slice(0, 100).map((p) => h('li', { text: p }))),
+        )
+      : h('p', { class: 'admin-note ok', text: T('admin.importNoProblems') });
+
+    const preview = h(
+      'table',
+      { class: 'mini' },
+      h(
+        'thead',
+        {},
+        h(
+          'tr',
+          {},
+          h('th', { text: 'ID' }),
+          h('th', { text: 'Parent' }),
+          h('th', { text: T('table.col.name') }),
+          h('th', { text: T('table.col.gender') }),
+          h('th', { text: T('table.col.dob') }),
+        ),
+      ),
+      h(
+        'tbody',
+        {},
+        ...state.rows.slice(0, 50).map((r) =>
+          h(
+            'tr',
+            {},
+            h('td', { text: r.legacy }),
+            h('td', { text: r.parent ?? '—' }),
+            h('td', { text: r.full_name }),
+            h('td', { text: r.gender ?? '—' }),
+            h('td', { text: r.dob ?? r.dob_text ?? '—' }),
+          ),
+        ),
+      ),
+    );
+
+    const updateBox = h('input', { type: 'checkbox', id: 'im_update' });
+    const runRow = h(
+      'div',
+      { class: 'admin-bar' },
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn btn--primary',
+          id: 'im_run',
+          onclick: () => {
+            const update = updateBox.checked;
+            void (async () => {
+              const ok = await confirmDialog({
+                title: T('admin.importTitle'),
+                message: T('admin.importConfirm'),
+                confirmLabel: T('admin.importRun', { n: state.rows?.length ?? 0 }),
+                kind: 'danger',
+                cancelLabel: T('panel.cancel'),
+                closeLabel: T('panel.close'),
+              });
+              if (!ok) return;
+              await runImport(ctx, update, statusEl);
+            })();
+          },
+        },
+        T('admin.importRun', { n: state.rows.length }),
+      ),
+    );
+
+    sections.push(
+      h(
+        'div',
+        { class: 'admin-section' },
+        problemPart,
+        h('label', { class: 'admin-check-row' }, updateBox, h('span', { text: T('admin.importUpdate') })),
+        h('div', { class: 'import-preview' }, preview),
+        state.rows.length > 50 ? h('p', { class: 'admin-note', text: `… ${state.rows.length - 50}` }) : null,
+        runRow,
+      ),
+    );
+  }
+
+  sections.push(
+    h(
+      'div',
+      { class: 'admin-section' },
+      h('h5', { text: T('admin.backupTitle') }),
+      h('p', { class: 'admin-note', text: T('admin.backupSub') }),
+      h(
+        'div',
+        { class: 'admin-bar' },
+        h('button', { type: 'button', class: 'btn btn--ghost', id: 'bk_json', onclick: () => void downloadBackup(ctx) }, T('admin.backupButton')),
+        h('button', { type: 'button', class: 'btn btn--ghost', id: 'bk_xlsx', onclick: () => { ctx.close(); ctx.deps.exportExcel?.(); } }, T('export.button')),
+      ),
+    ),
+  );
+
+  connected(ctx, () => ctx.body.replaceChildren(h('div', { class: 'admin-import' }, ...sections)));
+}
+
+/** Read the file, parse the layout, remember the result and refresh the tab. */
+async function onImportFile(ctx: AdminTabCtx, file: File | null): Promise<void> {
+  if (!file) return;
+  const statusNow = ctx.body.querySelector('#im_status');
+  if (statusNow) statusNow.textContent = ctx.i18n.t('admin.importReading');
+  try {
+    const XLSX = await import('xlsx');
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+    const sheetName = IMPORT_SHEET in wb.Sheets ? IMPORT_SHEET : wb.SheetNames[0];
+    const sheet = sheetName !== undefined ? (wb.Sheets[sheetName] ?? null) : null;
+    if (!sheet) throw new Error(ctx.i18n.fmt('admin.importSheetMissing', { sheet: IMPORT_SHEET }));
+    // Same options as the reference read: raw values and widened date cells
+    // (cellDates belongs to the read step, not to sheet_to_json's typings).
+    const raw = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true }) as Array<Record<string, unknown>>;
+    const parsed = parseSheet(raw, (key, params) => ctx.i18n.fmt(key, params));
+    importState.set(ctx, { rows: parsed.rows, problems: parsed.problems, fileName: file.name });
+    ctx.refresh();
+  } catch (err) {
+    ctx.deps.toast(ctx.i18n.fmt('admin.importFailed', { msg: extractMessage(err) }));
+  }
+}
+
+/** The confirmed write path: parents-first rows through the data layer. */
+async function runImport(ctx: AdminTabCtx, updateExisting: boolean, statusEl: HTMLElement): Promise<void> {
+  const T = t(ctx);
+  const state = importState.get(ctx);
+  const rows = state?.rows ?? [];
+  if (!rows.length) {
+    ctx.deps.toast(T('admin.importNothing'));
+    return;
+  }
+  try {
+    const outcome = await importPeople(ctx.deps.client, rows, updateExisting, (done, total) => {
+      statusEl.textContent = T('admin.importWorking', { done, total });
+    });
+    ctx.deps.toast(T('admin.importDone', { added: outcome.added, updated: outcome.updated }));
+    importState.set(ctx, { rows: null, problems: [], fileName: null });
+    await ctx.deps.reload();
+    ctx.refresh();
+  } catch (err) {
+    // The reference keeps the preview on failure so nothing is lost.
+    ctx.deps.toast(ctx.i18n.fmt('admin.importFailed', { msg: extractMessage(err) }));
+  }
+}
+
+/** Download every table as one JSON file (H8), then say so honestly. */
+async function downloadBackup(ctx: AdminTabCtx): Promise<void> {
+  const T = t(ctx);
+  try {
+    const payload = await fetchBackup(ctx.deps.client);
+    const blob = new Blob([JSON.stringify(payload, null, 1)], { type: 'application/json' });
+    const anchor = document.createElement('a');
+    anchor.href = URL.createObjectURL(blob);
+    anchor.download = `Nahri_Family_Backup_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(anchor.href), 4000);
+    ctx.deps.toast(T('admin.backupDone', { n: payload.people.length }));
+  } catch (err) {
+    // The reference reuses the import-failure copy for backup reads.
+    ctx.deps.toast(ctx.i18n.fmt('admin.importFailed', { msg: extractMessage(err) }));
+  }
 }

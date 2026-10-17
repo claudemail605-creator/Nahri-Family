@@ -9,6 +9,8 @@ export interface HeaderRefs {
   themeButton: HTMLButtonElement;
   /** Admins only — the panel is wired by the app shell. */
   adminButton: HTMLButtonElement;
+  /** Admins only (H7) — exports the tree as Excel; wired by the app shell. */
+  exportButton: HTMLButtonElement;
   /** Filled by the shell when a profile is signed in (avatar chip). */
   accountArea: HTMLElement;
 }
@@ -72,6 +74,23 @@ export function buildHeader(): HeaderRefs {
     ),
   );
 
+  /* The spreadsheet export (H7): admin-only, like the reference's top-bar
+     button. A spreadsheet outline in the same style. */
+  const exportButton = h(
+    'button',
+    {
+      type: 'button',
+      id: 'btn-export',
+      class: 'icon-button',
+      'data-i18n': 'export.title',
+      'data-i18n-attr': 'aria-label',
+      hidden: true,
+    },
+    svgIcon(
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M4 9.5h16M4 15.5h16M10 3.5v17M16 3.5v17" stroke-width="1.4"/></svg>`,
+    ),
+  );
+
   const element = h(
     'header',
     { class: 'app-header' },
@@ -87,9 +106,10 @@ export function buildHeader(): HeaderRefs {
       h('div', { class: 'lang-field' }, langLabel, langSelect),
       themeButton,
       adminButton,
+      exportButton,
       accountArea,
     ),
   );
 
-  return { element, langSelect, themeButton, adminButton, accountArea };
+  return { element, langSelect, themeButton, adminButton, exportButton, accountArea };
 }

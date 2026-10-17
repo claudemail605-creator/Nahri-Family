@@ -11,6 +11,7 @@ import {
 } from './features/auth/link';
 import { openProfileForm } from './features/profile/form';
 import { openAdminPanel } from './features/admin/modal';
+import { exportTreeExcel } from './features/admin/excel-export';
 import { clearPhotoCache } from './features/tree/photo';
 import { buildTreeWorkspace, type TreeWorkspace } from './features/tree/view';
 import { renderAccountChip } from './shell/account';
@@ -106,12 +107,34 @@ export function mountApp(root: HTMLElement, options: AppOptions = {}): AppInstan
       refreshProfile: () => auth.retryProfile(),
       getModel: () => workspace!.getModel(),
       reload: (id?: string) => workspace!.reload(id),
+      exportExcel: () => exportTreeExcel({
+        i18n,
+        getModel: () => workspace!.getModel(),
+        isAdmin: () => auth.isAdmin(),
+        toast: (message) => {
+          toasts.show(message);
+        },
+      }),
       toast: (message) => {
         toasts.show(message);
       },
     });
   };
   header.adminButton.addEventListener('click', openAdmin);
+
+  /** Export to Excel (H7) — the header entry point, admins only. */
+  const exportExcelFromHeader = (): void => {
+    if (!workspace) return;
+    exportTreeExcel({
+      i18n,
+      getModel: () => workspace!.getModel(),
+      isAdmin: () => auth.isAdmin(),
+      toast: (message) => {
+        toasts.show(message);
+      },
+    });
+  };
+  header.exportButton.addEventListener('click', exportExcelFromHeader);
 
   let renderedProfile: ProfileRow | null = null;
   let renderedAccount: { profile: ProfileRow | null; isAdmin: boolean } | null = null;
@@ -171,6 +194,7 @@ export function mountApp(root: HTMLElement, options: AppOptions = {}): AppInstan
     }
     // Admins only: the panel's own open() re-checks (B1).
     header.adminButton.hidden = !(ready && auth.isAdmin());
+  header.exportButton.hidden = !(ready && auth.isAdmin());
 
     if (ready && state.profile && state.profile !== renderedProfile) {
       renderedProfile = state.profile;

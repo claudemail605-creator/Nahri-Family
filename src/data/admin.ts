@@ -374,3 +374,150 @@ export async function setAccountActive(
     return { banned: false };
   }
 }
+
+/* ------------------------------ import and backup --------------------------- */
+
+/**
+ * One row of the original spreadsheet after parsing (the importer's column
+ * map). Field names match the people columns 1:1 — `legacy`/`parent` keep the
+ * reference's names because they are file-side ids, resolved against the
+ * database inside importPeople.
+ */
+export interface ImportRow {
+  legacy: string;
+  parent: string | null;
+  gender: string | null;
+  full_name: string;
+  nick_name: string | null;
+  fathers_name: string | null;
+  mothers_name: string | null;
+  spouse_name: string | null;
+  spouse_father_name: string | null;
+  dob: string | null;
+  dob_text: string | null;
+  place_of_birth: string | null;
+  qualification: string | null;
+  dod: string | null;
+  dod_text: string | null;
+  place_of_burial: string | null;
+  name_ur: string | null;
+  name_hi: string | null;
+  source: string | null;
+}
+
+/** Existing person rows: `legacy_id -> uuid`, so a re-import updates instead. */
+export async function fetchLegacyIds(client: SupabaseClient): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const { data, error } = await client
+    .from('people')
+    .select('id, legacy_id')
+    .not('legacy_id', 'is', null);
+  if (error) throw error;
+  for (const row of (data ?? []) as Array<{ id: string; legacy_id: string | null }>) {
+    if (row.legacy_id) map.set(row.legacy_id, row.id);
+  }
+  return map;
+}
+
+export interface ImportOutcome {
+  added: number;
+  updated: number;
+}
+
+/**
+ * Write parsed spreadsheet rows parents-first. New rows become inserts, rows
+ * whose legacy id is already in the database either update (when the admin
+ * ticked the update box) or are skipped — exactly the reference's runImport.
+ * `onProgress(done, total)` drives the status line between single-row writes.
+ */
+export async function importPeople(
+  client: SupabaseClient,
+  rows: readonly ImportRow[],
+  updateExisting: boolean,
+  onProgress: (done: number, total: number) => void,
+): Promise<ImportOutcome> {
+  const idMap = await fetchLegacyIds(client);
+  let added = 0;
+  let updated = 0;
+  const payload = (row: ImportRow): Record<string, string | null> => ({
+    gender: row.gender,
+    full_name: row.full_name,
+    nick_name: row.nick_name,
+    fathers_name: row.fathers_name,
+    mothers_name: row.mothers_name,
+    spouse_name: row.spouse_name,
+    spouse_father_name: row.spouse_father_name,
+    dob: row.dob,
+    dob_text: row.dob_text,
+    place_of_birth: row.place_of_birth,
+    qualification: row.qualification,
+    dod: row.dod,
+    dod_text: row.dod_text,
+    place_of_burial: row.place_of_burial,
+    name_ur: row.name_ur,
+    name_hi: row.name_hi,
+    source: row.source,
+  });
+
+  let done = 0;
+  for (const row of rows) {
+    const parentId = row.parent ? (idMap.get(row.parent) ?? null) : null;
+    const known = idMap.get(row.legacy);
+
+    if (known && !updateExisting) continue;
+    if (known) {
+      const { error } = await client
+        .from('people')
+        .update({ parent_id: parentId, ...payload(row) })
+        .eq('id', known);
+      if (error) throw error;
+      updated += 1;
+    } else {
+      // The reference selects the id back so children can point at it.
+      const { data, error } = await client
+        .from('people')
+        .insert({ legacy_id: row.legacy, parent_id: parentId, ...payload(row) })
+        .select('id')
+        .single();
+      if (error) throw error;
+      idMap.set(row.legacy, (data as { id: string }).id);
+      added += 1;
+    }
+    done += 1;
+    onProgress(done, rows.length);
+  }
+  return { added, updated };
+}
+
+/** Everything the JSON backup needs, read table by table (the admin's RLS). */
+export interface BackupPayload {
+  exported_at: string;
+  app: string;
+  people: unknown[];
+  profiles: unknown[];
+  branch_access: unknown[];
+  deletion_requests: unknown[];
+  audit_log: unknown[];
+}
+
+/** The limits keep a huge family from freezing the tab, like the reference. */
+export async function fetchBackup(client: SupabaseClient): Promise<BackupPayload> {
+  const [people, profiles, branches, requests, audit] = await Promise.all([
+    client.from('people').select('*').limit(10000),
+    client.from('profiles').select('*').limit(1000),
+    client.from('branch_access').select('*').limit(10000),
+    client.from('deletion_requests').select('*').limit(10000),
+    client.from('audit_log').select('*').order('changed_at', { ascending: false }).limit(5000),
+  ]);
+  const first = [people, profiles, branches, requests, audit].find((r) => r.error);
+  if (first && first.error) throw first.error;
+  return {
+    exported_at: new Date().toISOString(),
+    app: 'Nahri-Family',
+    people: people.data ?? [],
+    profiles: profiles.data ?? [],
+    branch_access: branches.data ?? [],
+    deletion_requests: requests.data ?? [],
+    audit_log: audit.data ?? [],
+  };
+}

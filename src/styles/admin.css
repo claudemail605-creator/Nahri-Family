@@ -357,6 +357,103 @@
   width: min(560px, 100%);
 }
 
+.admin-user-modal {
+  width: min(560px, 100%);
+}
+
+/* Import and backup (H6–H8) -------------------------------------------------- */
+
+.admin-section {
+  display: grid;
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-section:last-child {
+  border-bottom: 0;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.admin-section h5 {
+  font-size: var(--text-sm);
+  font-weight: 700;
+  margin: 0;
+}
+
+.admin-section .admin-bar {
+  margin-bottom: 0;
+}
+
+.import-problems {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  font-size: var(--text-xs);
+}
+
+.import-problems h5 {
+  font-size: var(--text-xs);
+  margin: 0 0 var(--space-1);
+}
+
+.import-problems ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+  color: var(--text-muted);
+}
+
+.import-problems li {
+  border-top: 1px dashed var(--border);
+  padding-top: var(--space-1);
+}
+
+.import-problems li:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.import-preview {
+  max-height: 16rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.import-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+}
+
+.import-preview th,
+.import-preview td {
+  text-align: start;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.import-preview th {
+  color: var(--text-muted);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+}
+
+.ok {
+  color: var(--accent-strong, var(--text));
+  font-size: var(--text-xs);
+}
+
 /* Small screens ------------------------------------------------------------ */
 
 @media (max-width: 640px) {
