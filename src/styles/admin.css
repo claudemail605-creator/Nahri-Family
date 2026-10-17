@@ -1,0 +1,300 @@
+/* ---- Admin panel (Phase 5, B1) ------------------------------------------- */
+
+/* A taller, wider dialog: the tabs read like a ledger section. */
+.admin-modal {
+  width: min(820px, 100%);
+  max-height: min(92vh, 780px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin: calc(-1 * var(--space-3)) 0 0;
+}
+
+/* Tab bar — the archive divider style: underline for the live tab. */
+.admin-tabs {
+  display: flex;
+  flex: none;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.admin-tab {
+  flex: none;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.admin-tab:hover {
+  color: var(--text);
+}
+
+.admin-tab--on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.admin-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: var(--space-2);
+}
+
+/* Notes and hints ---------------------------------------------------------- */
+
+.admin-hint {
+  margin: 0 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.admin-note {
+  padding: var(--space-3);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.admin-note--error {
+  border-color: var(--danger, var(--border-strong));
+  color: var(--danger, var(--text));
+}
+
+.admin-sep {
+  height: 1px;
+  margin: var(--space-4) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Branch progress (H4) ----------------------------------------------------- */
+
+.bp-row {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.bp-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 700;
+}
+
+.bp-meta {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.bp-meta b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.bp-stats {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-align: end;
+}
+
+.bp-stats b {
+  color: var(--text);
+}
+
+.bp-ok b {
+  color: var(--accent-strong, var(--text));
+}
+
+.bp-miss b {
+  color: var(--text);
+}
+
+.chip--status {
+  font-size: var(--text-2xs, 0.65rem);
+  padding: 1px 6px;
+}
+
+/* Deletion queue (F2) ------------------------------------------------------ */
+
+.delreq-row,
+.del-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.delreq-pending {
+  border-color: var(--border-strong);
+}
+
+.delreq-resolved {
+  opacity: 0.75;
+}
+
+.delreq-person {
+  font-weight: 700;
+}
+
+.delreq-meta,
+.del-meta {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.delreq-actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+}
+
+.req-tag {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.del-name {
+  font-weight: 700;
+}
+
+.del-actions {
+  flex: none;
+}
+
+/* Activity feed (H5) ------------------------------------------------------- */
+
+.admin-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.admin-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.admin-filters .input {
+  width: 100%;
+  min-height: 0;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.admin-filters .btn {
+  align-self: end;
+}
+
+.audit-row {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.audit-meta {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.audit-action {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.audit-delta {
+  margin-top: var(--space-1);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-xs);
+}
+
+.change-old {
+  color: var(--text-faint, var(--text-muted));
+  text-decoration: line-through;
+}
+
+.change-new {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Small screens ------------------------------------------------------------ */
+
+@media (max-width: 640px) {
+  .bp-row {
+    flex-direction: column;
+  }
+
+  .bp-stats {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    text-align: start;
+  }
+
+  .delreq-row,
+  .del-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .delreq-actions {
+    justify-content: flex-end;
+  }
+
+  .del-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+}

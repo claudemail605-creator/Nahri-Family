@@ -7,6 +7,8 @@ export interface HeaderRefs {
   element: HTMLElement;
   langSelect: HTMLSelectElement;
   themeButton: HTMLButtonElement;
+  /** Admins only — the panel is wired by the app shell. */
+  adminButton: HTMLButtonElement;
   /** Filled by the shell when a profile is signed in (avatar chip). */
   accountArea: HTMLElement;
 }
@@ -53,6 +55,23 @@ export function buildHeader(): HeaderRefs {
 
   const accountArea = h('div', { class: 'account-area', id: 'account-area' });
 
+  /* The admin panel button (B1): hidden unless the profile is an admin.
+     A cog-like outline keeps the header's line-icon language. */
+  const adminButton = h(
+    'button',
+    {
+      type: 'button',
+      id: 'btn-admin',
+      class: 'icon-button',
+      'data-i18n': 'btnAdmin',
+      'data-i18n-attr': 'aria-label',
+      hidden: true,
+    },
+    svgIcon(
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>`,
+    ),
+  );
+
   const element = h(
     'header',
     { class: 'app-header' },
@@ -67,9 +86,10 @@ export function buildHeader(): HeaderRefs {
       { class: 'app-header__actions' },
       h('div', { class: 'lang-field' }, langLabel, langSelect),
       themeButton,
+      adminButton,
       accountArea,
     ),
   );
 
-  return { element, langSelect, themeButton, accountArea };
+  return { element, langSelect, themeButton, adminButton, accountArea };
 }

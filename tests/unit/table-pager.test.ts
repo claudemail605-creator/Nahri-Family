@@ -15,7 +15,7 @@ import { rawRow } from './tree-fixture';
 function persons(n: number): Person[] {
   return Array.from({ length: n }, (_, i) =>
     toPerson(rawRow({ id: `p${i + 1}`, full_name: `P ${i + 1}` })),
-  );
+  ).filter((p): p is Person => p !== null);
 }
 
 beforeEach(() => {

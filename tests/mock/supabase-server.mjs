@@ -36,7 +36,10 @@ const NOW_ISO = '2026-01-01T00:00:00.000Z';
 /* ------------------------------- fixtures ------------------------------- */
 
 function makeUser(id, email, profile, branchAccess = [], password = PASSWORD) {
-  return { id, email, password, profile, branchAccess };
+  // Named accounts are treated as having signed in once (the admin panel's
+  // "last sign-in" column needs a stable value); invitees never have.
+  const lastSignInAt = password ? NOW_ISO : null;
+  return { id, email, password, profile, branchAccess, lastSignInAt };
 }
 
 const ADMIN_ID = '11111111-1111-4111-8111-111111111111';
@@ -542,6 +545,7 @@ function overlayFor(token) {
       people: new Map(),
       audit: [],
       deletionRequests: [],
+      requestPatches: [],
       inserts: [],
       patches: [],
       uploads: [],
@@ -650,6 +654,8 @@ async function handleAuth(req, res, url) {
           msg: 'Invalid login credentials',
         });
       }
+      // The admin panel's "last sign-in" column reads this stamp.
+      user.lastSignInAt = nowIso();
       return sendJson(req, res, 200, mintSession(user));
     }
 
@@ -901,11 +907,35 @@ async function handleRest(req, res, url) {
     return raw && raw.startsWith('eq.') ? raw.slice(3) : null;
   }
 
+  /** Range filters arrive as `col=gte.value` / `col=lte.value`. */
+  function queryRange(key, prefix) {
+    const raw = url.searchParams.get(key);
+    return raw && raw.startsWith(prefix) ? raw.slice(prefix.length) : null;
+  }
+
   if (table === 'profiles') {
     if (req.method === 'GET') {
+      const wantsObject = String(req.headers.accept ?? '').includes('application/vnd.pgrst.object+json');
+      if (user && user.profile?.role === 'admin') {
+        // Admins read the full roster (name-ordered), same as reference RLS.
+        let rows = USERS.filter((u) => u.profile).map((u) => ({
+          id: u.id,
+          email: u.email,
+          ...u.profile,
+        }));
+        const id = queryValue('id');
+        if (id) rows = rows.filter((row) => row.id === id);
+        rows = sortRows(rows, url.searchParams.get('order'));
+        if (wantsObject) {
+          if (rows.length !== 1) {
+            return restError(req, res, 406, 'PGRST116', 'JSON object requested, multiple (or no) rows returned');
+          }
+          return sendJson(req, res, 200, rows[0]);
+        }
+        return sendJson(req, res, 200, rows);
+      }
       const id = queryValue('id');
       const row = user && user.profile && (!id || id === user.id) ? user.profile : null;
-      const wantsObject = String(req.headers.accept ?? '').includes('application/vnd.pgrst.object+json');
       if (wantsObject) {
         if (!row) {
           return restError(req, res, 406, 'PGRST116', 'JSON object requested, multiple (or no) rows returned');
@@ -929,7 +959,19 @@ async function handleRest(req, res, url) {
 
   if (table === 'branch_access' && req.method === 'GET') {
     const requested = queryValue('user_id');
-    if (!user || requested !== user.id) return sendJson(req, res, 200, []);
+    if (!user) return sendJson(req, res, 200, []);
+    if (user.profile?.role === 'admin' && requested !== user.id) {
+      // The admin panel reads every editor's assignment.
+      const rows = [];
+      for (const u of USERS) {
+        for (const personId of u.branchAccess ?? []) {
+          rows.push({ user_id: u.id, person_id: personId });
+        }
+      }
+      if (requested) return sendJson(req, res, 200, rows.filter((row) => row.user_id === requested));
+      return sendJson(req, res, 200, sortRows(rows, url.searchParams.get('order')));
+    }
+    if (requested !== user.id) return sendJson(req, res, 200, []);
     const rows = user.branchAccess.map((personId) => ({ user_id: user.id, person_id: personId }));
     return sendJson(req, res, 200, rows);
   }
@@ -1011,17 +1053,78 @@ async function handleRest(req, res, url) {
     return sendJson(req, res, 201, created);
   }
 
+  if (table === 'deletion_requests' && req.method === 'GET') {
+    // RLS: admins see the whole queue; editors see requests they made.
+    if (!user || !user.profile || !user.profile.active) {
+      return restError(req, res, 403, '42501', 'permission denied for table deletion_requests');
+    }
+    let all = [];
+    for (const overlay of overlays.values()) all.push(...overlay.deletionRequests);
+    if (user.profile.role !== 'admin') {
+      all = all.filter((row) => row.requested_by === user.id);
+    }
+    for (const [col, raw] of url.searchParams.entries()) {
+      if (!raw.startsWith('eq.')) continue;
+      const wanted = raw.slice(3);
+      all = all.filter((row) => String(row[col] ?? '') === wanted);
+    }
+    all = sortRows(all, url.searchParams.get('order'));
+    const limitRaw = url.searchParams.get('limit');
+    if (limitRaw) all = all.slice(0, Number(limitRaw));
+    return sendJson(req, res, 200, all);
+  }
+
+  if (table === 'deletion_requests' && req.method === 'PATCH') {
+    // RLS: only admins resolve. The row lives in its creator's overlay —
+    // deletion_requests is a global table, so resolved values are visible to
+    // every later read.
+    if (!user || !user.profile?.active || user.profile.role !== 'admin') {
+      return restError(req, res, 403, '42501', 'permission denied for table deletion_requests');
+    }
+    const id = queryValue('id');
+    let owner = null;
+    let row = null;
+    if (id) {
+      for (const overlay of overlays.values()) {
+        const hit = overlay.deletionRequests.find((candidate) => candidate.id === id);
+        if (hit) {
+          owner = overlay;
+          row = hit;
+          break;
+        }
+      }
+    }
+    if (!row) {
+      return restError(req, res, 404, '404', 'deletion request not found');
+    }
+    const body = await readJson(req);
+    if (typeof body.status === 'string') row.status = body.status;
+    if ('resolved_by' in body) row.resolved_by = body.resolved_by ?? null;
+    if ('resolved_at' in body) row.resolved_at = body.resolved_at ?? null;
+    overlayFor(token).requestPatches.push({ id: row.id, body: { ...body } });
+    return sendEmpty(req, res, 204);
+  }
+
   if (table === 'audit_log' && req.method === 'GET') {
     // RLS: admin sees all; editors see the history of people they can edit.
     if (!user || !user.profile || !user.profile.active) {
       return restError(req, res, 403, '42501', 'permission denied for table audit_log');
     }
     const personId = queryValue('person_id');
+    // Activity-feed filters (H5): actor, action and a changed_at date range.
+    const actorId = queryValue('changed_by');
+    const actionFilter = queryValue('action');
+    const gte = queryRange('changed_at', 'gte.');
+    const lte = queryRange('changed_at', 'lte.');
     const overlay = token ? overlays.get(token) : null;
     const rows = effectivePeople(overlay);
     const allowed = (row) => canEditPerson(user, rows.get(row.person_id));
     let all = [...AUDIT_LOG, ...(overlay?.audit ?? [])];
     if (personId) all = all.filter((row) => row.person_id === personId);
+    if (actorId) all = all.filter((row) => row.changed_by === actorId);
+    if (actionFilter) all = all.filter((row) => row.action === actionFilter);
+    if (gte !== null) all = all.filter((row) => row.changed_at !== null && row.changed_at >= gte);
+    if (lte !== null) all = all.filter((row) => row.changed_at !== null && row.changed_at <= lte);
     all = all.filter((row) => allowed(row));
     all = sortRows(all, url.searchParams.get('order'));
     const limitRaw = url.searchParams.get('limit');
@@ -1213,6 +1316,7 @@ async function handleMock(req, res, url) {
         people: new Map(),
         audit: [],
         deletionRequests: [],
+        requestPatches: [],
         inserts: [],
         patches: [],
         uploads: [],
@@ -1223,6 +1327,7 @@ async function handleMock(req, res, url) {
         people: [...one.people.values()],
         audit: one.audit,
         deletionRequests: one.deletionRequests,
+        requestPatches: one.requestPatches ?? [],
         inserts: one.inserts,
         patches: one.patches,
         uploads: one.uploads,
@@ -1237,6 +1342,7 @@ async function handleMock(req, res, url) {
       people: [],
       audit: [],
       deletionRequests: [],
+      requestPatches: [],
       inserts: [],
       patches: [],
       uploads: [],
@@ -1252,6 +1358,7 @@ async function handleMock(req, res, url) {
       }
       merged.audit.push(...overlay.audit);
       merged.deletionRequests.push(...overlay.deletionRequests);
+      merged.requestPatches.push(...(overlay.requestPatches ?? []));
       merged.inserts.push(...overlay.inserts);
       merged.patches.push(...overlay.patches);
       merged.uploads.push(...overlay.uploads);
@@ -1275,6 +1382,49 @@ async function handleMock(req, res, url) {
   return sendJson(req, res, 404, { error: `No mock route: ${req.method} ${path}` });
 }
 
+/* -------------------------------- functions ------------------------------- */
+
+/**
+ * A tiny stand-in for the vendored `admin-users` Edge Function
+ * (supabase/functions/admin-users/index.ts). Only `list` is implemented so
+ * far — the users-management chunk adds invite/update/resend/set_password/
+ * disable/enable. Non-admins get the same 403 the deployed function returns.
+ */
+async function handleFunctions(req, res, url) {
+  const pathname = url.pathname;
+
+  if (req.method === 'POST' && pathname === '/functions/v1/admin-users') {
+    const token = bearerToken(req);
+    const userId = token ? (accessTokens.get(token) ?? null) : null;
+    const user = userId ? findUserById(userId) : null;
+    if (!user) {
+      return sendJson(req, res, 401, { error: 'invalid JWT' });
+    }
+    if (user.profile?.role !== 'admin' || !user.profile.active) {
+      return sendJson(req, res, 403, { error: 'forbidden — admins only' });
+    }
+    const body = await readJson(req);
+    const action = body.action;
+
+    if (action === 'list') {
+      const users = USERS.map((u) => ({
+        id: u.id,
+        email: u.email,
+        full_name: u.profile?.full_name ?? null,
+        role: u.profile?.role ?? null,
+        active: u.profile?.active ?? false,
+        language: u.profile?.language ?? 'en',
+        last_sign_in_at: u.lastSignInAt ?? null,
+      })).sort((a, b) => String(a.full_name ?? a.email).localeCompare(String(b.full_name ?? b.email)));
+      return sendJson(req, res, 200, { ok: true, users });
+    }
+
+    return sendJson(req, res, 400, { error: `Unknown admin-users action: ${action}` });
+  }
+
+  return sendJson(req, res, 404, { error: `No mock function route: ${req.method} ${pathname}` });
+}
+
 /* --------------------------------- server -------------------------------- */
 
 const server = createServer((req, res) => {
@@ -1285,11 +1435,13 @@ const server = createServer((req, res) => {
     ? handleAuth
     : url.pathname.startsWith('/rest/v1/')
       ? handleRest
-      : url.pathname.startsWith('/storage/v1/')
-        ? handleStorage
-        : url.pathname.startsWith('/__mock/')
-          ? handleMock
-          : null;
+      : url.pathname.startsWith('/functions/v1/')
+        ? handleFunctions
+        : url.pathname.startsWith('/storage/v1/')
+          ? handleStorage
+          : url.pathname.startsWith('/__mock/')
+            ? handleMock
+            : null;
 
   const done = route
     ? route(req, res, url)

@@ -57,6 +57,10 @@ export interface TreeWorkspaceDeps {
 
 export interface TreeWorkspace {
   element: HTMLElement;
+  /** The live model — admin tools read names, branches and deleted rows from it. */
+  getModel(): TreeModel;
+  /** Re-fetch every row, rebuild, repaint; `id` (or the current selection) is kept selected. */
+  reload(id?: string): Promise<void>;
   dispose(): void;
 }
 
@@ -1061,6 +1065,8 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
 
   return {
     element,
+    getModel: () => model,
+    reload: (id?: string) => reloadAndSelect(id ?? selectedId),
     dispose() {
       disposed = true;
       if (pulseTimer != null) window.clearTimeout(pulseTimer);

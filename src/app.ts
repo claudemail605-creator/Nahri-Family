@@ -10,6 +10,7 @@ import {
   type Windowish,
 } from './features/auth/link';
 import { openProfileForm } from './features/profile/form';
+import { openAdminPanel } from './features/admin/modal';
 import { clearPhotoCache } from './features/tree/photo';
 import { buildTreeWorkspace, type TreeWorkspace } from './features/tree/view';
 import { renderAccountChip } from './shell/account';
@@ -94,6 +95,23 @@ export function mountApp(root: HTMLElement, options: AppOptions = {}): AppInstan
 
   const openEditProfile = (): void => openProfileForm({ i18n, auth });
 
+  /** The admin panel (B1) — only sensible while a workspace is loaded. */
+  const openAdmin = (): void => {
+    if (!workspace || !auth.isAdmin() || !options.client) return;
+    openAdminPanel({
+      i18n,
+      client: options.client,
+      isAdmin: () => auth.isAdmin(),
+      profile: () => auth.getState().profile,
+      getModel: () => workspace!.getModel(),
+      reload: (id?: string) => workspace!.reload(id),
+      toast: (message) => {
+        toasts.show(message);
+      },
+    });
+  };
+  header.adminButton.addEventListener('click', openAdmin);
+
   let renderedProfile: ProfileRow | null = null;
   let renderedAccount: { profile: ProfileRow | null; isAdmin: boolean } | null = null;
   let renderedUserId: string | null = null;
@@ -150,6 +168,8 @@ export function mountApp(root: HTMLElement, options: AppOptions = {}): AppInstan
         onOpenProfile: openEditProfile,
       });
     }
+    // Admins only: the panel's own open() re-checks (B1).
+    header.adminButton.hidden = !(ready && auth.isAdmin());
 
     if (ready && state.profile && state.profile !== renderedProfile) {
       renderedProfile = state.profile;
