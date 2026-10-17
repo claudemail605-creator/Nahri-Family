@@ -16,7 +16,7 @@ import type { TreeModel } from '../tree/model';
 import type { Lang } from '../../core/types';
 import { h } from '../../ui/dom';
 import { openModal, type ModalHandle } from '../../ui/modal';
-import { renderBranchesTab, renderRequestsTab, renderDeletedTab, renderActivityTab } from './tabs';
+import { renderUsersTab, renderBranchesTab, renderRequestsTab, renderDeletedTab, renderActivityTab } from './tabs';
 
 export interface AdminPanelDeps {
   i18n: I18n;
@@ -24,6 +24,8 @@ export interface AdminPanelDeps {
   isAdmin(): boolean;
   /** The signed-in profile — nullable while the session refreshes. */
   profile(): ProfileRow | null;
+  /** Re-read the signed-in profile after the panel renamed the account. */
+  refreshProfile?(): void;
   /** The live workspace model (names, branches, deleted rows). */
   getModel(): TreeModel;
   /** Workspace refetch after writes change the tree; optionally selects id. */
@@ -41,7 +43,7 @@ export interface AdminTabCtx {
   refresh(): void;
 }
 
-type TabId = 'branches' | 'requests' | 'deleted' | 'activity';
+type TabId = 'users' | 'branches' | 'requests' | 'deleted' | 'activity';
 
 interface TabDef {
   id: TabId;
@@ -49,9 +51,10 @@ interface TabDef {
   render(ctx: AdminTabCtx): void;
 }
 
-/* Tabs shipped so far (Users and Import & backup land in later chunks of
-   Phase 5 — each tab ships with its tests). */
+/* The reference's tab order: users, then branch progress… Import & backup
+   lands in a later chunk of Phase 5 and joins at the end. */
 const TABS: readonly TabDef[] = [
+  { id: 'users', labelKey: 'admin.tab.users', render: renderUsersTab },
   { id: 'branches', labelKey: 'admin.tab.branches', render: renderBranchesTab },
   { id: 'requests', labelKey: 'admin.tab.requests', render: renderRequestsTab },
   { id: 'deleted', labelKey: 'admin.tab.deleted', render: renderDeletedTab },
@@ -62,11 +65,11 @@ const TABS: readonly TabDef[] = [
  * Open the admin panel. Admin-only guard here as well as on the header
  * button — deep-linking the export is not a scenario.
  */
-export function openAdminPanel(deps: AdminPanelDeps, startTab: TabId = 'branches'): ModalHandle | null {
+export function openAdminPanel(deps: AdminPanelDeps, startTab: TabId = 'users'): ModalHandle | null {
   if (!deps.isAdmin()) return null;
 
   const i18n = deps.i18n;
-  let currentTab: TabId = TABS.some((tab) => tab.id === startTab) ? startTab : 'branches';
+  let currentTab: TabId = TABS.some((tab) => tab.id === startTab) ? startTab : 'users';
 
   const tabsBar = h('div', { class: 'admin-tabs', role: 'tablist' });
   const body = h('div', { class: 'admin-body', id: 'admin-body' });

@@ -371,6 +371,18 @@ const signedRefs = new Map();
 /** Fault injection: the next N people reads for one account answer 500. */
 const failPeopleFor = new Map(); // email -> remaining failures
 
+/**
+ * Account-level writes live OUTSIDE the session overlay (they affect the
+ * global user roster the way the real service-role function does). The merged
+ * /__mock/writes view exposes them so tests can assert the real writes:
+ *   functionCalls       every admin-users action{action, caller, body}
+ *   profilePatches      admin profiles PATCH{caller, id, body}
+ *   branchAccessWrites  branch_access writes by the users tab{caller, op, ...}
+ */
+const functionCalls = [];
+const profilePatches = [];
+const branchAccessWrites = [];
+
 function findUserByEmail(email) {
   const normalized = String(email ?? '').toLowerCase();
   return USERS.find((u) => u.email === normalized) ?? null;
@@ -947,12 +959,37 @@ async function handleRest(req, res, url) {
     }
     if (req.method === 'PATCH') {
       const id = queryValue('id');
-      if (!user || !user.profile || id !== user.id) {
+      if (!user || !user.profile) {
         return restError(req, res, 403, '42501', 'permission denied for table profiles');
       }
       const body = await readJson(req);
-      if (typeof body.full_name === 'string') user.profile.full_name = body.full_name;
-      if (typeof body.language === 'string') user.profile.language = body.language;
+      if (id === user.id) {
+        // Everyone edits their own full name and language (Profile dialog); an
+        // admin may also flip their own flags through the panel's fields.
+        if (typeof body.full_name === 'string') user.profile.full_name = body.full_name;
+        if (typeof body.language === 'string') user.profile.language = body.language;
+        if (user.profile.role === 'admin') {
+          if (typeof body.role === 'string') user.profile.role = body.role;
+          if (typeof body.active === 'boolean') user.profile.active = body.active;
+        }
+      } else if (user.profile.role === 'admin') {
+        // The Users tab edits other accounts: name, role and active flag.
+        const target = USERS.find((u) => u.id === id && u.profile);
+        if (!target) {
+          return restError(req, res, 403, '42501', 'permission denied for table profiles');
+        }
+        if (typeof body.full_name === 'string') target.profile.full_name = body.full_name;
+        if (body.role !== undefined) {
+          if (body.role !== 'admin' && body.role !== 'editor') {
+            return triggerError(req, res, 'Role must be editor or admin.');
+          }
+          target.profile.role = body.role;
+        }
+        if (typeof body.active === 'boolean') target.profile.active = body.active;
+      } else {
+        return restError(req, res, 403, '42501', 'permission denied for table profiles');
+      }
+      profilePatches.push({ caller: user.email, id, body });
       return sendEmpty(req, res);
     }
   }
@@ -974,6 +1011,38 @@ async function handleRest(req, res, url) {
     if (requested !== user.id) return sendJson(req, res, 200, []);
     const rows = user.branchAccess.map((personId) => ({ user_id: user.id, person_id: personId }));
     return sendJson(req, res, 200, rows);
+  }
+
+  // The Users tab rewrites an account's branches: delete all rows for the user,
+  // then insert the picked ones (the reference's replaceBranches shape).
+  if (table === 'branch_access' && (req.method === 'DELETE' || req.method === 'POST')) {
+    if (!user || user.profile?.role !== 'admin') {
+      return restError(req, res, 403, '42501', 'permission denied for table branch_access');
+    }
+    if (req.method === 'DELETE') {
+      const userId = queryValue('user_id');
+      const owner = USERS.find((u) => u.id === userId);
+      if (owner) {
+        const removed = [...(owner.branchAccess ?? [])];
+        owner.branchAccess = [];
+        for (const personId of removed) {
+          branchAccessWrites.push({ caller: user.email, op: 'delete', user_id: owner.id, person_id: personId });
+        }
+      }
+      return sendEmpty(req, res);
+    }
+    const body = await readJson(req);
+    const rows = Array.isArray(body) ? body : [body];
+    for (const row of rows) {
+      if (!row || typeof row.user_id !== 'string' || typeof row.person_id !== 'string') continue;
+      const owner = USERS.find((u) => u.id === row.user_id && u.profile);
+      if (!owner) continue; // would be an FK violation; callers use live ids
+      if (!owner.branchAccess.includes(row.person_id)) {
+        owner.branchAccess.push(row.person_id);
+        branchAccessWrites.push({ caller: user.email, op: 'insert', user_id: owner.id, person_id: row.person_id });
+      }
+    }
+    return sendEmpty(req, res);
   }
 
   if (table === 'people' && req.method === 'GET') {
@@ -1332,6 +1401,9 @@ async function handleMock(req, res, url) {
         patches: one.patches,
         uploads: one.uploads,
         removals: one.removals,
+        functions: [],
+        profiles: [],
+        branches: [],
       });
     }
 
@@ -1347,6 +1419,10 @@ async function handleMock(req, res, url) {
       patches: [],
       uploads: [],
       removals: [],
+      // Account-level changes are global — journals mirror the real ones.
+      functions: [...functionCalls],
+      profiles: [...profilePatches],
+      branches: [...branchAccessWrites],
     };
     const seen = new Set();
     for (const [token, overlay] of overlays) {
@@ -1386,9 +1462,10 @@ async function handleMock(req, res, url) {
 
 /**
  * A tiny stand-in for the vendored `admin-users` Edge Function
- * (supabase/functions/admin-users/index.ts). Only `list` is implemented so
- * far — the users-management chunk adds invite/update/resend/set_password/
- * disable/enable. Non-admins get the same 403 the deployed function returns.
+ * (supabase/functions/admin-users/index.ts): all seven actions with the same
+ * validation messages, guard rules and response shapes. Non-admins get the
+ * same 403 the deployed function returns. Created accounts join the global
+ * USERS roster; every call is journalled for /__mock/writes.
  */
 async function handleFunctions(req, res, url) {
   const pathname = url.pathname;
@@ -1401,10 +1478,11 @@ async function handleFunctions(req, res, url) {
       return sendJson(req, res, 401, { error: 'invalid JWT' });
     }
     if (user.profile?.role !== 'admin' || !user.profile.active) {
-      return sendJson(req, res, 403, { error: 'forbidden — admins only' });
+      return sendJson(req, res, 403, { error: 'Only an active admin can manage accounts.' });
     }
     const body = await readJson(req);
     const action = body.action;
+    functionCalls.push({ caller: user.email, action, body: { ...body, action: undefined } });
 
     if (action === 'list') {
       const users = USERS.map((u) => ({
@@ -1417,6 +1495,113 @@ async function handleFunctions(req, res, url) {
         last_sign_in_at: u.lastSignInAt ?? null,
       })).sort((a, b) => String(a.full_name ?? a.email).localeCompare(String(b.full_name ?? b.email)));
       return sendJson(req, res, 200, { ok: true, users });
+    }
+
+    if (action === 'invite') {
+      const email = String(body.email ?? '').trim().toLowerCase();
+      const fullName = String(body.full_name ?? '').trim();
+      const role = String(body.role ?? 'editor');
+      const branchIds = Array.isArray(body.branch_person_ids)
+        ? [...new Set(body.branch_person_ids.filter((v) => typeof v === 'string' && v))]
+        : [];
+      const sendEmail = body.send_email !== false;
+
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return sendJson(req, res, 400, { error: 'A valid email address is required.' });
+      }
+      if (!fullName) {
+        return sendJson(req, res, 400, { error: 'A full name is required.' });
+      }
+      if (role !== 'admin' && role !== 'editor') {
+        return sendJson(req, res, 400, { error: 'Role must be editor or admin.' });
+      }
+      if (findUserByEmail(email)) {
+        return sendJson(req, res, 400, {
+          error: 'A user with this email address has already been registered',
+        });
+      }
+
+      // send_email: the invitation link picks the password at first arrival,
+      // so the mock account starts password-less — exactly like fixture users.
+      const created = {
+        id: crypto.randomUUID(),
+        email,
+        password: sendEmail ? null : `temp-${email.slice(0, 8)}-9a`,
+        profile: { full_name: fullName, role, active: true, language: 'en' },
+        branchAccess: role === 'admin' ? [] : branchIds,
+        lastSignInAt: null,
+      };
+      USERS.push(created);
+      return sendJson(req, res, 200, {
+        ok: true,
+        user_id: created.id,
+        temporary_password: sendEmail ? null : created.password,
+      });
+    }
+
+    if (action === 'update') {
+      const targetId = String(body.user_id ?? '');
+      if (!targetId) return sendJson(req, res, 400, { error: 'user_id is required.' });
+      const target = USERS.find((u) => u.id === targetId && u.profile);
+      if (!target) return sendJson(req, res, 400, { error: 'No profile found for that account.' });
+      if (typeof body.role === 'string' && !['admin', 'editor'].includes(body.role)) {
+        return sendJson(req, res, 400, { error: 'Role must be editor or admin.' });
+      }
+      if (targetId === user.id && typeof body.role === 'string' && body.role !== 'admin') {
+        return sendJson(req, res, 400, { error: 'You cannot remove your own admin role.' });
+      }
+      if (typeof body.full_name === 'string') target.profile.full_name = body.full_name.trim();
+      if (typeof body.role === 'string') target.profile.role = body.role;
+      if (Array.isArray(body.branch_person_ids)) {
+        const branchIds = [...new Set(body.branch_person_ids.filter((v) => typeof v === 'string' && v))];
+        for (const personId of target.branchAccess ?? []) {
+          branchAccessWrites.push({ caller: user.email, op: 'delete', user_id: target.id, person_id: personId });
+        }
+        target.branchAccess = [];
+        target.branchAccess.push(...(target.profile.role === 'admin' ? [] : branchIds));
+        for (const personId of target.branchAccess) {
+          branchAccessWrites.push({ caller: user.email, op: 'insert', user_id: target.id, person_id: personId });
+        }
+      }
+      return sendJson(req, res, 200, { ok: true });
+    }
+
+    if (action === 'resend') {
+      const targetId = String(body.user_id ?? '');
+      if (!targetId) return sendJson(req, res, 400, { error: 'user_id is required.' });
+      const target = USERS.find((u) => u.id === targetId && u.profile);
+      if (!target?.profile) return sendJson(req, res, 400, { error: 'That account has no email address.' });
+      // Never signed in -> a fresh invitation; otherwise a recovery link.
+      return sendJson(req, res, 200, { ok: true, kind: target.password ? 'recovery' : 'invite' });
+    }
+
+    if (action === 'set_password') {
+      const targetId = String(body.user_id ?? '');
+      const password = String(body.password ?? '');
+      if (!targetId) return sendJson(req, res, 400, { error: 'user_id is required.' });
+      if (targetId === user.id) {
+        return sendJson(req, res, 400, { error: 'Change your own password from the Profile button instead.' });
+      }
+      if (password.length < 8) {
+        return sendJson(req, res, 400, { error: 'The password must be at least 8 characters.' });
+      }
+      const target = USERS.find((u) => u.id === targetId);
+      if (!target) return sendJson(req, res, 400, { error: 'No such account.' });
+      target.password = password;
+      return sendJson(req, res, 200, { ok: true });
+    }
+
+    if (action === 'disable' || action === 'enable') {
+      const active = action !== 'disable';
+      const uid = typeof body.user_id === 'string' ? body.user_id : '';
+      if (!uid) return sendJson(req, res, 400, { error: 'user_id is required.' });
+      if (!active && uid === user.id) {
+        return sendJson(req, res, 400, { error: 'You cannot deactivate your own account.' });
+      }
+      const target = USERS.find((u) => u.id === uid);
+      if (!target) return sendJson(req, res, 400, { error: 'No such account.' });
+      if (target.profile) target.profile.active = active;
+      return sendJson(req, res, 200, { ok: true });
     }
 
     return sendJson(req, res, 400, { error: `Unknown admin-users action: ${action}` });

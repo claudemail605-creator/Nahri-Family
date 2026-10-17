@@ -19,15 +19,25 @@ import {
   fetchLastSignInTimes,
   fetchProfiles,
   fetchRecentlyDeleted,
+  inviteAccount,
+  resendAccountEmail,
+  replaceBranchAccess,
   resolveDeletionRequest,
+  setAccountActive,
+  setAccountPassword,
+  updateProfile,
+  invokeAdminUsers,
   type ActivityFilter,
+  type AdminUserRow,
   type DeletionRequestRow,
   type RecentlyDeletedRow,
 } from '../../data/admin';
 import { setPersonDeleted } from '../../data/people';
 import { branchPeopleOf, completeness } from '../tree/branch';
 import { fieldDiffs } from '../tree/fields';
+import type { Person } from '../tree/model';
 import { h } from '../../ui/dom';
+import { openModal } from '../../ui/modal';
 import { confirmDialog } from '../../ui/confirm';
 import type { AdminTabCtx } from './modal';
 
@@ -82,6 +92,627 @@ function personName(ctx: AdminTabCtx, id: string | null, profiles: ProfileRow[])
 
 function statusChip(label: string, tone: 'ok' | 'off'): HTMLElement {
   return h('span', { class: `chip chip--status chip--${tone}`, text: label });
+}
+
+/* --------------------------------- users ---------------------------------- */
+
+/** The users tab's cached function answer, per panel instance. */
+interface SignInState {
+  map: Map<string, string | null>;
+  /** Any failure to read last sign-ins (usually "function not deployed"). */
+  missing: boolean;
+}
+
+const signInState = new WeakMap<AdminTabCtx, SignInState>();
+
+/* ------------------------------- small parts ------------------------------ */
+
+/** "Name · "nick" · Gen 3 — parent", language-aware (personform's pattern). */
+function pickerLabel(ctx: AdminTabCtx, p: Person): string {
+  const bits = [getDisplayName(p, ctx.lang)];
+  if (p.nick) bits.push(`“${p.nick}”`);
+  bits.push(ctx.i18n.fmt('chip.gen', { g: p.gen }));
+  if (p.parent) bits.push(`— ${getDisplayName(p.parent, ctx.lang)}`);
+  return bits.join(' · ');
+}
+
+/**
+ * Branch picker: a filter box over a scrollable checkbox list of people —
+ * the reference's branchPickerHtml, as real elements.
+ */
+function branchPicker(ctx: AdminTabCtx, selected: readonly string[]): HTMLElement {
+  const T = t(ctx);
+  const model = ctx.deps.getModel();
+  const chosen = new Set(selected);
+  const people = model.people
+    .filter((p) => !p.is_deleted)
+    .sort((a, b) => a.gen - b.gen || (a.name ?? '').localeCompare(b.name ?? ''));
+
+  const filter = h('input', {
+    class: 'input edit-input',
+    type: 'search',
+    id: 'bp_filter',
+    placeholder: T('admin.inviteBranchesSearch'),
+    autocomplete: 'off',
+  });
+  const rows = people.map((p) =>
+    h(
+      'label',
+      { class: 'admin-check-row branch-item', dataset: { name: p._hay } },
+      h('input', { type: 'checkbox', value: p.id, checked: chosen.has(p.id) }),
+      h('span', { text: pickerLabel(ctx, p) }),
+    ),
+  );
+  filter.addEventListener('input', () => {
+    const q = filter.value.trim().toLowerCase();
+    for (const row of rows) row.hidden = !!q && !row.dataset.name?.includes(q);
+  });
+
+  return h(
+    'div',
+    { class: 'edit-field admin-branchpick' },
+    h('label', { class: 'edit-label', text: T('admin.inviteBranches') }),
+    filter,
+    h('div', { class: 'admin-branchpick-list' }, ...rows),
+  );
+}
+
+function readBranchPicker(root: HTMLElement): string[] {
+  const picks: string[] = [];
+  for (const box of root.querySelectorAll<HTMLInputElement>('.admin-check-row input[type=checkbox]')) {
+    if (box.checked && box.value && box.value !== 'on') picks.push(box.value);
+  }
+  return picks;
+}
+
+/* ------------------------------- the accounts ------------------------------ */
+
+function userCard(
+  ctx: AdminTabCtx,
+  u: ProfileRow,
+  branchIds: readonly string[],
+  lastSignIn: Map<string, string | null>,
+  functionMissing: boolean,
+  meId: string | null,
+): HTMLElement {
+  const T = t(ctx);
+  const model = ctx.deps.getModel();
+  const branchNames = branchIds.map((id) => {
+    const person = model.byId.get(id);
+    return person ? getDisplayName(person, ctx.lang) : String(id).slice(0, 8);
+  });
+  const name = u.full_name || u.email || '';
+  const isMe = meId !== null && u.id === meId;
+  // "never" would be a lie when the admin-users function is not deployed:
+  // the browser simply cannot read auth.users.last_sign_in_at without it.
+  const seenWhen =
+    lastSignIn.has(u.id) && lastSignIn.get(u.id)
+      ? fmtWhen(ctx, lastSignIn.get(u.id) as string)
+      : T('admin.never');
+  const lastSeen = functionMissing ? T('admin.unknown') : seenWhen;
+
+  return h(
+    'div',
+    { class: 'admin-user', dataset: { user: u.id } },
+    h(
+      'div',
+      { class: 'admin-user-main' },
+      h(
+        'div',
+        { class: 'admin-user-name' },
+        name,
+        u.role === 'admin' ? h('span', { class: 'tag tag--admin', text: T('admin.adminTag') }) : null,
+        u.active ? null : h('span', { class: 'tag tag--gray', text: T('admin.inactiveTag') }),
+        isMe ? h('span', { class: 'tag tag--gray', text: T('admin.you') }) : null,
+      ),
+      h('div', { class: 'admin-user-email', text: u.email ?? '' }),
+      h(
+        'div',
+        { class: 'admin-user-meta' },
+        u.role === 'admin' ? T('admin.inviteRoleAdmin') : T('admin.inviteRoleEditor'),
+      ),
+      h(
+        'div',
+        { class: 'admin-user-meta' },
+        h('b', { text: `${T('admin.col.branches')}: ` }),
+        branchNames.length ? branchNames.join(', ') : h('i', { text: T('admin.noBranches') }),
+      ),
+      h(
+        'div',
+        { class: 'admin-user-meta' },
+        h('b', { text: `${T('admin.col.lastSeen')}: ` }),
+        lastSeen,
+      ),
+    ),
+    h(
+      'div',
+      { class: 'admin-user-actions' },
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn btn--ghost',
+          dataset: { act: 'edit' },
+          onclick: () => openEditUser(ctx, u, branchIds),
+        },
+        T('admin.editUser'),
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn btn--ghost',
+          dataset: { act: 'resend' },
+          onclick: () => {
+            void resendInvite(ctx, u);
+          },
+        },
+        T('admin.resendInvite'),
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn btn--ghost',
+          dataset: { act: 'password' },
+          onclick: () => openSetPassword(ctx, u),
+        },
+        T('admin.setTempPassword'),
+      ),
+      u.active
+        ? h(
+            'button',
+            {
+              type: 'button',
+              class: 'btn btn--danger',
+              dataset: { act: 'deactivate' },
+              onclick: () => {
+                void changeActive(ctx, u, false);
+              },
+            },
+            T('admin.deactivate'),
+          )
+        : h(
+            'button',
+            {
+              type: 'button',
+              class: 'btn btn--ghost',
+              dataset: { act: 'activate' },
+              onclick: () => {
+                void changeActive(ctx, u, true);
+              },
+            },
+            T('admin.activate'),
+          ),
+    ),
+  );
+}
+
+/**
+ * The account roster (H1–H3): invite, edit name/role/branches, a temporary
+ * password, resend the invite e-mail and activate/deactivate. Everything an
+ * RLS admin may write goes through REST; anything that needs the service-role
+ * key goes through the vendored admin-users function. When it is missing the
+ * tab says so (banner + "unknown" last-seen) while activate/deactivate still
+ * degrade gracefully, exactly like the reference.
+ */
+export function renderUsersTab(ctx: AdminTabCtx): void {
+  const T = t(ctx);
+  ctx.body.replaceChildren(note(ctx, 'admin.usersLoading'));
+  void (async () => {
+    try {
+      const [profiles, rows] = await Promise.all([
+        fetchProfiles(ctx.deps.client),
+        fetchBranchAccess(ctx.deps.client),
+      ]);
+      const branches = new Map<string, string[]>();
+      for (const row of rows) {
+        const list = branches.get(row.user_id) ?? [];
+        list.push(row.person_id);
+        branches.set(row.user_id, list);
+      }
+
+      let state = signInState.get(ctx);
+      if (!state) {
+        const signIn = new Map<string, string | null>();
+        try {
+          const data = await invokeAdminUsers<{ users?: AdminUserRow[] }>(ctx.deps.client, 'list');
+          for (const u of data.users ?? []) signIn.set(u.id, u.last_sign_in_at ?? null);
+          state = { map: signIn, missing: false };
+        } catch {
+          // The reference treats any list failure as "function missing": the
+          // column reads "unknown" and the banner explains why.
+          state = { map: signIn, missing: true };
+        }
+        signInState.set(ctx, state);
+      }
+      const info: SignInState = state;
+      const meId = ctx.deps.profile()?.id ?? null;
+      const cards = profiles.map((u) =>
+        userCard(ctx, u, branches.get(u.id) ?? [], info.map, info.missing, meId),
+      );
+
+      connected(ctx, () => {
+        ctx.body.replaceChildren(
+          h(
+            'div',
+            { class: 'admin-users-body' },
+            info.missing ? h('div', { class: 'admin-note', text: T('admin.notDeployed') }) : null,
+            h(
+              'div',
+              { class: 'admin-bar' },
+              h(
+                'button',
+                {
+                  type: 'button',
+                  class: 'btn btn--primary',
+                  id: 'ad_invite',
+                  onclick: () => openInvite(ctx),
+                },
+                T('admin.inviteTitle'),
+              ),
+            ),
+            profiles.length
+              ? h('div', { class: 'admin-list' }, ...cards)
+              : h('div', { class: 'admin-note', text: T('admin.noUsers') }),
+          ),
+        );
+      });
+    } catch (err) {
+      connected(ctx, () => ctx.body.replaceChildren(failure(ctx, err, 'admin.usersFailed')));
+    }
+  })();
+}
+
+/* ------------------------------ user management ----------------------------- */
+
+let dialogSeq = 0;
+
+function formError(): HTMLElement {
+  return h('div', { class: 'edit-error', hidden: true });
+}
+
+function showError(box: HTMLElement, message: string): void {
+  box.textContent = message;
+  box.hidden = false;
+}
+
+/** Field row: label above input (the personform's edit-field pattern). */
+function field(label: string, input: HTMLElement, id: string, required = false): HTMLElement {
+  return h(
+    'div',
+    { class: 'edit-field' },
+    h(
+      'label',
+      { class: 'edit-label', for: id },
+      label,
+      required ? h('span', { class: 'edit-req', text: ' *' }) : null,
+    ),
+    input,
+  );
+}
+
+/** The invite composer (H1): name, e-mail, role, branch picker + live review. */
+function openInvite(ctx: AdminTabCtx): void {
+  const T = t(ctx);
+  const error = formError();
+  const emailInput = h('input', {
+    class: 'input edit-input',
+    id: 'iv_email',
+    type: 'email',
+    autocomplete: 'off',
+  });
+  const nameInput = h('input', {
+    class: 'input edit-input',
+    id: 'iv_name',
+    type: 'text',
+    autocomplete: 'off',
+  });
+  const roleSelect = h(
+    'select',
+    { class: 'input edit-input', id: 'iv_role' },
+    h('option', { value: 'editor' }, T('admin.inviteRoleEditor')),
+    h('option', { value: 'admin' }, T('admin.inviteRoleAdmin')),
+  );
+  const picker = branchPicker(ctx, []);
+  const sendMail = h('input', { type: 'checkbox', id: 'iv_mail' });
+  sendMail.checked = true;
+  const review = h('div', { class: 'branch-note', id: 'iv_review' });
+
+  const formId = `admin-user-form-${++dialogSeq}`;
+  const form = h(
+    'form',
+    { id: formId, class: 'edit-form', novalidate: true },
+    field(`${T('admin.inviteEmail')}`, emailInput, 'iv_email', true),
+    field(`${T('admin.inviteName')}`, nameInput, 'iv_name', true),
+    field(T('admin.inviteRole'), roleSelect, 'iv_role'),
+    picker,
+    h('label', { class: 'admin-check-row' }, sendMail, h('span', { text: T('admin.inviteSendMail') })),
+    review,
+    error,
+  );
+
+  let saving = false;
+
+  function paintReview(): void {
+    const model = ctx.deps.getModel();
+    const role = roleSelect.value === 'admin' ? T('admin.inviteRoleAdmin') : T('admin.inviteRoleEditor');
+    const picks = readBranchPicker(picker).map((id) => {
+      const person = model.byId.get(id);
+      return person ? getDisplayName(person, ctx.lang) : String(id).slice(0, 8);
+    });
+    review.replaceChildren(
+      h('b', { text: T('branch.reviewTitle') }),
+      h(
+        'div',
+        {},
+        T('branch.reviewLine', {
+          name: nameInput.value || '…',
+          email: emailInput.value || '…',
+          role,
+          n: picks.length,
+        }),
+      ),
+      picks.length
+        ? h('div', {}, picks.join(' · '))
+        : h('div', {}, h('i', { text: T('branch.reviewNoBranches') })),
+    );
+  }
+  form.addEventListener('input', paintReview);
+  form.addEventListener('change', paintReview);
+  paintReview();
+
+  const modal = openModal({
+    title: T('admin.inviteTitle'),
+    subtitle: T('admin.inviteSub'),
+    content: form,
+    dialogClass: 'modal--wide admin-user-modal',
+    closeLabel: T('panel.close'),
+    dismissible: () => !saving,
+    actions: [
+      { label: T('panel.cancel'), kind: 'ghost', onClick: (close) => close() },
+      { label: T('admin.inviteSend'), kind: 'primary', type: 'submit', form: formId },
+    ],
+  });
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const email = emailInput.value.trim();
+    const fullName = nameInput.value.trim();
+    if (!email) return showError(error, T('admin.emailRequired'));
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showError(error, T('admin.emailInvalid'));
+    if (!fullName) return showError(error, T('admin.nameRequired'));
+    saving = true;
+    void (async () => {
+      try {
+        const sendEmail = sendMail.checked;
+        const outcome = await inviteAccount(ctx.deps.client, {
+          email,
+          fullName,
+          role: roleSelect.value === 'admin' ? 'admin' : 'editor',
+          branchPersonIds: readBranchPicker(picker),
+          sendEmail,
+        });
+        if (sendEmail || !outcome.temporaryPassword) {
+          ctx.deps.toast(T('admin.inviteDone', { email }));
+        } else {
+          // The password is shown once — the composer re-words it verbatim.
+          ctx.deps.toast(T('admin.inviteNoMail', { pw: outcome.temporaryPassword }));
+        }
+        modal.close();
+        ctx.refresh();
+      } catch (err) {
+        saving = false;
+        showError(error, extractMessage(err) || T('admin.inviteFailed'));
+      }
+    })();
+  });
+}
+
+/** Edit name / role / branches (H2). Everything REST-writable happens here. */
+function openEditUser(ctx: AdminTabCtx, u: ProfileRow, branchIds: readonly string[]): void {
+  const T = t(ctx);
+  const isMe = ctx.deps.profile()?.id === u.id;
+  const error = formError();
+  const nameInput = h('input', {
+    class: 'input edit-input',
+    id: 'eu_name',
+    type: 'text',
+    autocomplete: 'off',
+  });
+  nameInput.value = u.full_name ?? '';
+  const roleSelect = h(
+    'select',
+    { class: 'input edit-input', id: 'eu_role' },
+    h('option', { value: 'editor', selected: u.role !== 'admin' }, T('admin.inviteRoleEditor')),
+    h('option', { value: 'admin', selected: u.role === 'admin' }, T('admin.inviteRoleAdmin')),
+  );
+  if (isMe) roleSelect.setAttribute('disabled', '');
+  const picker = branchPicker(ctx, branchIds);
+
+  const formId = `admin-user-form-${++dialogSeq}`;
+  const form = h(
+    'form',
+    { id: formId, class: 'edit-form', novalidate: true },
+    field(T('admin.inviteName'), nameInput, 'eu_name'),
+    field(T('admin.inviteRole'), roleSelect, 'eu_role'),
+    isMe ? h('div', { class: 'edit-hint', text: T('admin.selfRole') }) : null,
+    picker,
+    error,
+  );
+
+  let saving = false;
+
+  const modal = openModal({
+    title: T('admin.editTitle', { name: u.full_name || u.email || '' }),
+    content: form,
+    dialogClass: 'modal--wide admin-user-modal',
+    closeLabel: T('panel.close'),
+    dismissible: () => !saving,
+    actions: [
+      { label: T('panel.cancel'), kind: 'ghost', onClick: (close) => close() },
+      { label: T('admin.profileSave'), kind: 'primary', type: 'submit', form: formId },
+    ],
+  });
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    void (async () => {
+      const fullName = nameInput.value.trim();
+      if (!fullName) return showError(error, T('admin.nameRequired'));
+      // The self-row's role cannot change (the select is disabled); sending
+      // 'editor' would demote the caller, so keep the account's own role.
+      const role: 'admin' | 'editor' = isMe
+        ? u.role === 'admin'
+          ? 'admin'
+          : 'editor'
+        : roleSelect.value === 'admin'
+          ? 'admin'
+          : 'editor';
+      const picks = readBranchPicker(picker);
+
+      // Phase 5C parity: confirm before rewriting someone's branches and
+      // before handing out admin rights (plain window.confirm there).
+      const before = [...branchIds].sort().join(',');
+      const after = [...picks].sort().join(',');
+      if (before !== after) {
+        const ok = await confirmDialog({
+          title: T('admin.editTitle', { name: u.full_name || u.email || '' }),
+          message: T('admin.confirmBranches', { name: u.full_name || u.email || '' }),
+          confirmLabel: T('admin.profileSave'),
+          cancelLabel: T('panel.cancel'),
+          closeLabel: T('panel.close'),
+        });
+        if (!ok) return;
+      }
+      if (!isMe && u.role !== 'admin' && role === 'admin') {
+        const ok = await confirmDialog({
+          title: T('admin.inviteRoleAdmin'),
+          message: T('admin.confirmRole', { name: u.full_name || u.email || '' }),
+          confirmLabel: T('admin.profileSave'),
+          cancelLabel: T('panel.cancel'),
+          kind: 'danger',
+          closeLabel: T('panel.close'),
+        });
+        if (!ok) return;
+      }
+
+      saving = true;
+      try {
+        await updateProfile(ctx.deps.client, u.id, { full_name: fullName, role });
+        try {
+          await replaceBranchAccess(ctx.deps.client, u.id, picks);
+        } catch (err) {
+          // The profile edit landed; the branches did not — say both things.
+          showError(error, extractMessage(err) || T('admin.branchesSaveFailed'));
+          saving = false;
+          return;
+        }
+        ctx.deps.toast(T('admin.branchesSaved'));
+        modal.close();
+        if (isMe) ctx.deps.refreshProfile?.();
+        ctx.refresh();
+      } catch (err) {
+        saving = false;
+        const raw = extractMessage(err);
+        showError(
+          error,
+          /permission|policy/i.test(raw) ? T('admin.profilePermError') : raw || T('admin.profileFailed'),
+        );
+      }
+    })();
+  });
+}
+
+/** H3: activate/deactivate, guarded (no self-deactivation, confirm first). */
+async function changeActive(ctx: AdminTabCtx, u: ProfileRow, active: boolean): Promise<void> {
+  const T = t(ctx);
+  const name = u.full_name || u.email || '';
+  if (!active && ctx.deps.profile()?.id === u.id) {
+    ctx.deps.toast(T('admin.selfActive'));
+    return;
+  }
+  if (!active) {
+    const ok = await confirmDialog({
+      title: T('admin.deactivate'),
+      message: T('admin.confirmDeactivate', { name }),
+      confirmLabel: T('admin.deactivate'),
+      cancelLabel: T('panel.cancel'),
+      kind: 'danger',
+      closeLabel: T('panel.close'),
+    });
+    if (!ok) return;
+  }
+  try {
+    await setAccountActive(ctx.deps.client, u.id, active);
+    ctx.deps.toast(active ? T('admin.activated', { name }) : T('admin.deactivated', { name }));
+    ctx.refresh();
+  } catch (err) {
+    ctx.deps.toast(T('admin.changeFailed', { msg: extractMessage(err) }));
+  }
+}
+
+/** Fresh invite / recovery e-mail through the function. */
+async function resendInvite(ctx: AdminTabCtx, u: ProfileRow): Promise<void> {
+  const T = t(ctx);
+  try {
+    await resendAccountEmail(ctx.deps.client, u.id);
+    ctx.deps.toast(T('admin.resendDone', { email: u.email ?? '' }));
+  } catch (err) {
+    ctx.deps.toast(extractMessage(err) || T('admin.changeFailed', { msg: 'admin-users' }));
+  }
+}
+
+/** A temporary sign-in password for a relative without e-mail. */
+function openSetPassword(ctx: AdminTabCtx, u: ProfileRow): void {
+  const T = t(ctx);
+  const error = formError();
+  const pwInput = h('input', {
+    class: 'input edit-input',
+    id: 'sp_pw',
+    type: 'text',
+    autocomplete: 'off',
+  });
+
+  const formId = `admin-user-form-${++dialogSeq}`;
+  const form = h(
+    'form',
+    { id: formId, class: 'edit-form', novalidate: true },
+    field(T('admin.tempPasswordLabel'), pwInput, 'sp_pw'),
+    error,
+  );
+
+  let saving = false;
+
+  const modal = openModal({
+    title: T('admin.setTempPasswordTitle', { name: u.full_name || u.email || '' }),
+    subtitle: T('admin.setTempPasswordSub'),
+    content: form,
+    dialogClass: 'admin-user-modal',
+    closeLabel: T('panel.close'),
+    dismissible: () => !saving,
+    actions: [
+      { label: T('panel.cancel'), kind: 'ghost', onClick: (close) => close() },
+      { label: T('admin.setTempPassword'), kind: 'primary', type: 'submit', form: formId },
+    ],
+  });
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const password = pwInput.value;
+    if (password.length < 8) return showError(error, T('auth.pwTooShort'));
+    saving = true;
+    void (async () => {
+      try {
+        await setAccountPassword(ctx.deps.client, u.id, password);
+        ctx.deps.toast(T('admin.setTempPasswordDone', { name: u.full_name || u.email || '' }));
+        modal.close();
+      } catch (err) {
+        saving = false;
+        showError(error, extractMessage(err));
+      }
+    })();
+  });
 }
 
 /* ------------------------------ branch progress ---------------------------- */

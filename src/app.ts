@@ -103,6 +103,7 @@ export function mountApp(root: HTMLElement, options: AppOptions = {}): AppInstan
       client: options.client,
       isAdmin: () => auth.isAdmin(),
       profile: () => auth.getState().profile,
+      refreshProfile: () => auth.retryProfile(),
       getModel: () => workspace!.getModel(),
       reload: (id?: string) => workspace!.reload(id),
       toast: (message) => {

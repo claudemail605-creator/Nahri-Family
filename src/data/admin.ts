@@ -242,3 +242,135 @@ export async function fetchLastSignInTimes(
   }
   return map;
 }
+
+/* ----------------------------- the Users tab's writes ----------------------- */
+
+/**
+ * These mirror the reference's users tab semantics exactly: name / role /
+ * active flag and the branch list are written through RLS-permitted REST (an
+ * admin is allowed to do that with its own key), while anything that needs the
+ * service-role key (inviting, e-mail, passwords, banning) goes through the
+ * vendored admin-users function.
+ */
+
+/** All columns an admin may patch on another account's profile. */
+export interface ProfilePatch {
+  full_name?: string;
+  role?: 'admin' | 'editor';
+  active?: boolean;
+}
+
+/** Change an account's name / role / active flag. */
+export async function updateProfile(
+  client: SupabaseClient,
+  userId: string,
+  patch: ProfilePatch,
+): Promise<void> {
+  const body: Record<string, unknown> = {};
+  if (patch.full_name !== undefined) body.full_name = patch.full_name;
+  if (patch.role !== undefined) body.role = patch.role;
+  if (patch.active !== undefined) body.active = patch.active;
+  const { error } = await client.from('profiles').update(body).eq('id', userId);
+  if (error) throw error;
+}
+
+/** Replace an account's branch assignments: delete every row, insert the picked. */
+export async function replaceBranchAccess(
+  client: SupabaseClient,
+  userId: string,
+  personIds: string[],
+): Promise<void> {
+  const del = await client.from('branch_access').delete().eq('user_id', userId);
+  if (del.error) throw del.error;
+  if (!personIds.length) return;
+  const ins = await client
+    .from('branch_access')
+    .insert(personIds.map((person_id) => ({ user_id: userId, person_id })));
+  if (ins.error) throw ins.error;
+}
+
+export interface InviteOutcome {
+  userId: string;
+  /** Only when the account was created WITHOUT an invitation e-mail. */
+  temporaryPassword: string | null;
+}
+
+/** Create an account through the function (invitation mail or a temp password). */
+export async function inviteAccount(
+  client: SupabaseClient,
+  input: {
+    email: string;
+    fullName: string;
+    role: 'admin' | 'editor';
+    branchPersonIds: string[];
+    sendEmail: boolean;
+  },
+): Promise<InviteOutcome> {
+  const data = await invokeAdminUsers<{ user_id?: string | null; temporary_password?: string | null }>(
+    client,
+    'invite',
+    {
+      email: input.email,
+      full_name: input.fullName,
+      role: input.role,
+      branch_person_ids: input.branchPersonIds,
+      send_email: input.sendEmail,
+    },
+  );
+  if (!data.user_id) throw new Error('The account was created but no user id came back.');
+  return { userId: data.user_id, temporaryPassword: data.temporary_password ?? null };
+}
+
+/** A fresh invitation — or a recovery mail for an account that signed in once. */
+export async function resendAccountEmail(
+  client: SupabaseClient,
+  userId: string,
+): Promise<'invite' | 'recovery'> {
+  const data = await invokeAdminUsers<{ kind?: string }>(client, 'resend', { user_id: userId });
+  return data.kind === 'recovery' ? 'recovery' : 'invite';
+}
+
+/** Set a relative's sign-in password (they cannot receive e-mail). */
+export async function setAccountPassword(
+  client: SupabaseClient,
+  userId: string,
+  password: string,
+): Promise<void> {
+  await invokeAdminUsers(client, 'set_password', { user_id: userId, password });
+}
+
+/**
+ * Activate/deactivate with the reference's graceful degradation: the profile
+ * flag itself is writable through RLS, so a missing function still flips the
+ * access flag — it just cannot ban/unban the auth user.
+ *
+ * Parity note: the reference calls `fn('disable', { user_id, active })` for
+ * BOTH directions, but the vendored function derives the direction from the
+ * action name alone (`case 'disable'` hard-codes active:false), so the
+ * reference's own "activate" click actually deactivated the account and then
+ * toasted success. This port calls 'enable' instead — the bug is documented,
+ * not copied.
+ */
+export async function setAccountActive(
+  client: SupabaseClient,
+  userId: string,
+  active: boolean,
+): Promise<{ banned: boolean }> {
+  try {
+    const out = await invokeAdminUsers<{ ok?: boolean; warning?: string }>(
+      client,
+      active ? 'enable' : 'disable',
+      { user_id: userId },
+    );
+    // The function reports a failed ban as { ok, warning } — the flag landed,
+    // but the session was not killed: not a full ban.
+    return { banned: !out.warning };
+  } catch {
+    // Without the Edge Function the auth user cannot be banned, but the
+    // profile flag already stops the account from using the tree — do that
+    // much directly, exactly like the reference (which swallows any function
+    // failure for this action).
+    await updateProfile(client, userId, { active });
+    return { banned: false };
+  }
+}
