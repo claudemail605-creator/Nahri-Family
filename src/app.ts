@@ -10,8 +10,11 @@ import {
   type Windowish,
 } from './features/auth/link';
 import { openProfileForm } from './features/profile/form';
+import { extractMessage } from './features/auth/errors';
 import { openAdminPanel } from './features/admin/modal';
 import { exportTreeExcel } from './features/admin/excel-export';
+import { openToolsModal } from './features/extra/modal';
+import { exportTreePng } from './features/extra/png-export';
 import { clearPhotoCache } from './features/tree/photo';
 import { buildTreeWorkspace, type TreeWorkspace } from './features/tree/view';
 import { renderAccountChip } from './shell/account';
@@ -136,6 +139,67 @@ export function mountApp(root: HTMLElement, options: AppOptions = {}): AppInstan
   };
   header.exportButton.addEventListener('click', exportExcelFromHeader);
 
+  /** The tools modal (extras L1–L4) — any signed-in user with a loaded tree. */
+  const openTools = (): void => {
+    if (!workspace) {
+      toasts.show(i18n.t('generic.emptyTree'));
+      return;
+    }
+    openToolsModal({
+      i18n,
+      getModel: () => workspace!.getModel(),
+      selectPerson: (id) => {
+        workspace?.select(id);
+      },
+      print: printTreeFromTools,
+      exportPng: exportPngFromTools,
+      toast: (message) => {
+        toasts.show(message);
+      },
+    });
+  };
+  header.toolsButton.addEventListener('click', openTools);
+
+  /** Print this view (L4): fill the print head; the modal closes before the
+   * print dialog measures the page (reference `printTree`). */
+  const printTreeFromTools = (): boolean => {
+    if (!workspace || !workspace.element.querySelector('.pcard')) {
+      toasts.show(i18n.t('extra.printNothing'));
+      return false;
+    }
+    const head = document.getElementById('print-head');
+    if (head) {
+      const model = workspace.getModel();
+      head.textContent =
+        `${i18n.t('brand.title')} — ${new Date().toLocaleDateString()} · ` +
+        i18n.fmt('brand.subtitle', {
+          n: model.people.length,
+          g: new Set(model.people.map((p) => p.gen)).size,
+          // Same wording as the header subtitle, so the printed page says
+          // where the data came from in the reader's own language.
+          source: i18n.t('source.supabase'),
+        });
+    }
+    window.setTimeout(() => window.print(), 60);
+    return true;
+  };
+
+  /** Save the tree as PNG (L4) — toasts its own failures honestly. */
+  const exportPngFromTools = async (): Promise<boolean> => {
+    if (!workspace) return false;
+    try {
+      await exportTreePng({
+        i18n,
+        getModel: () => workspace!.getModel(),
+        getRenderState: () => workspace?.getRenderState() ?? null,
+      });
+      return true;
+    } catch (err) {
+      toasts.show(i18n.fmt('extra.printFailed', { msg: extractMessage(err) }));
+      return false;
+    }
+  };
+
   let renderedProfile: ProfileRow | null = null;
   let renderedAccount: { profile: ProfileRow | null; isAdmin: boolean } | null = null;
   let renderedUserId: string | null = null;
@@ -194,7 +258,10 @@ export function mountApp(root: HTMLElement, options: AppOptions = {}): AppInstan
     }
     // Admins only: the panel's own open() re-checks (B1).
     header.adminButton.hidden = !(ready && auth.isAdmin());
-  header.exportButton.hidden = !(ready && auth.isAdmin());
+    header.exportButton.hidden = !(ready && auth.isAdmin());
+    // Tools (extras): any signed-in user; the modal's own guard toasts the
+    // empty tree like the reference.
+    header.toolsButton.hidden = !ready;
 
     if (ready && state.profile && state.profile !== renderedProfile) {
       renderedProfile = state.profile;

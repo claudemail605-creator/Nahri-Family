@@ -57,10 +57,14 @@ export interface TreeWorkspaceDeps {
 
 export interface TreeWorkspace {
   element: HTMLElement;
-  /** The live model — admin tools read names, branches and deleted rows from it. */
+  /** The live model - admin tools read names, branches and deleted rows from it. */
   getModel(): TreeModel;
   /** Re-fetch every row, rebuild, repaint; `id` (or the current selection) is kept selected. */
   reload(id?: string): Promise<void>;
+  /** Client-side selection only — highlights the card and opens the panel. */
+  select(id: string): void;
+  /** The last computed layout and collapse set (null before the first render). */
+  getRenderState(): { layout: LayoutResult; collapsed: ReadonlySet<string> } | null;
   dispose(): void;
 }
 
@@ -281,6 +285,8 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
 
   const emptyNote = h('div', { id: 'empty-note', class: 'tw-empty', hidden: true });
 
+  // Print header, filled in by the tools' "Print this view" (extras L4).
+  const printHead = h('div', { id: 'print-head', class: 'print-head', 'aria-hidden': 'true' });
   const world = h('div', { id: 'tree-world', class: 'tree-world' });
   const tooltip = h('div', { id: 'tree-tooltip', class: 'tooltip', hidden: true, 'aria-hidden': 'true' });
   const stage = h(
@@ -293,6 +299,7 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
       dir: 'ltr',
       'aria-label': i18n.t('view.tree'),
     },
+    printHead,
     world,
     tooltip,
   );
@@ -1067,6 +1074,14 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     element,
     getModel: () => model,
     reload: (id?: string) => reloadAndSelect(id ?? selectedId),
+    /** Client-side selection (goto-person from the tools) — no refetch. */
+    select(id: string): void {
+      select(id);
+    },
+    /** The last computed layout + collapse set, for the PNG export. */
+    getRenderState() {
+      return layout ? { layout, collapsed } : null;
+    },
     dispose() {
       disposed = true;
       if (pulseTimer != null) window.clearTimeout(pulseTimer);

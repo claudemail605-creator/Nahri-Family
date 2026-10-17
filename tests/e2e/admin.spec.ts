@@ -1,9 +1,17 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as XLSX from 'xlsx';
 import { en } from '../../src/core/i18n/dict.en';
+import {
+  ADMIN_ID,
+  globalWrites,
+  expectToast,
+  sessionWrites,
+  signInAs,
+  t,
+} from './helpers';
 
 /*
  * Phase 5 (chunks B–D) — the admin panel against the mock Supabase server.
@@ -29,52 +37,6 @@ import { en } from '../../src/core/i18n/dict.en';
  * session's requests), so assertions are always scoped through the person
  * name rather than by queue-wide counts, and projects use different people.
  */
-const PASSWORD = 'test-password-1';
-const MOCK = 'http://127.0.0.1:54321';
-const ADMIN_ID = '11111111-1111-4111-8111-111111111111';
-
-const t = (key: keyof typeof en, params: Record<string, string | number> = {}): string => {
-  let out: string = en[key];
-  for (const [name, value] of Object.entries(params)) out = out.replace(`{${name}}`, String(value));
-  return out;
-};
-
-interface MockWrites {
-  email: string;
-  people: Array<Record<string, unknown> & { id: string }>;
-  audit: Array<{ id: number | string; person_id: string; action: string }>;
-  deletionRequests: Array<{ person_id: string; reason: string | null; status: string }>;
-  requestPatches: Array<{ id: string; body: Record<string, unknown> }>;
-  inserts: Array<{ id: string; values: Record<string, unknown> }>;
-  patches: Array<{ id: string; body: Record<string, unknown> }>;
-  uploads: Array<{ key: string }>;
-  removals: Array<{ key: string }>;
-  /** Account-level journals (merged view only). */
-  functions: Array<{ caller: string; action: string; body: Record<string, unknown> }>;
-  profiles: Array<{ caller: string; id: string; body: Record<string, unknown> }>;
-  branches: Array<{ caller: string; op: string; user_id: string; person_id?: string }>;
-}
-
-/**
- * The merged view by account email: every overlay of that account plus the
- * account-level journals (function actions, profile patches, branch_access
- * writes). Race-free as long as tests only assert rows they created or match
- * with unique values.
- */
-async function globalWrites(request: APIRequestContext, email: string): Promise<MockWrites> {
-  const response = await request.get(`${MOCK}/__mock/writes?email=${encodeURIComponent(email)}`);
-  expect(response.ok(), `reading merged writes for ${email}`).toBeTruthy();
-  return response.json() as Promise<MockWrites>;
-}
-
-async function signInAs(page: Page, email: string): Promise<void> {
-  await page.goto('/');
-  await expect(page.locator('#sign-in-form')).toBeVisible();
-  await page.locator('#sign-in-email').fill(email);
-  await page.locator('#sign-in-password').fill(PASSWORD);
-  await page.locator('#sign-in-submit').click();
-  await expect(page.locator('#view-tree')).toBeVisible();
-}
 
 /** Opens the panel through the header button and returns its dialog. */
 async function openAdminPanel(page: Page): Promise<void> {
@@ -90,31 +52,6 @@ async function openTab(
   id: 'users' | 'branches' | 'requests' | 'deleted' | 'activity' | 'import',
 ): Promise<void> {
   await page.locator(`.admin-tab[data-tab="${id}"]`).click();
-}
-
-async function sessionToken(page: Page): Promise<string> {
-  const token = await page.evaluate(() => {
-    for (let i = 0; i < localStorage.length; i += 1) {
-      const key = localStorage.key(i) ?? '';
-      if (!key.includes('auth-token')) continue;
-      try {
-        const parsed = JSON.parse(localStorage.getItem(key) ?? '') as { access_token?: string } | null;
-        if (parsed && typeof parsed.access_token === 'string') return parsed.access_token;
-      } catch {
-        /* not the session blob */
-      }
-    }
-    return null;
-  });
-  expect(token).toBeTruthy();
-  return token as string;
-}
-
-async function sessionWrites(page: Page, request: APIRequestContext): Promise<MockWrites> {
-  const token = await sessionToken(page);
-  const response = await request.get(`${MOCK}/__mock/writes?token=${encodeURIComponent(token)}`);
-  expect(response.ok()).toBeTruthy();
-  return response.json() as Promise<MockWrites>;
 }
 
 /** The editor's deletion-request flow straight from the branch tile. */
@@ -136,10 +73,6 @@ async function clickTopDialog(page: Page, kind: 'accent' | 'primary' | 'danger' 
   const modal = page.locator('.modal-backdrop').last();
   await expect(modal).toBeVisible();
   await modal.locator(`.modal__actions .btn--${kind}`).click();
-}
-
-async function expectToast(page: Page, text: string): Promise<void> {
-  await expect(page.locator('#toast-host .toast__message').last()).toHaveText(text);
 }
 
 test('only admins get the admin and export buttons; the panel opens with the tabs', async ({ page }) => {

@@ -67,6 +67,10 @@ export function cardDates(p: Person): string {
 export function renderTreeInto(world: HTMLElement, options: TreeRenderOptions): Set<string> {
   const { i18n, model, layout, collapsed } = options;
   const { pos, width, height, minGen } = layout;
+  // Explicit world size: the tree-world otherwise has none (everything inside
+  // is absolutely positioned) and the print stylesheet needs a real box.
+  world.style.width = `${width}px`;
+  world.style.height = `${height}px`;
   const visibleKids = (id: string): Person[] => options.visibleKids.get(id) ?? [];
   const rendered = new Set<string>();
   let enterIndex = 0;

@@ -5,6 +5,8 @@ import './styles/shell.css';
 import './styles/features.css';
 import './styles/tree.css';
 import './styles/admin.css';
+import './styles/extras.css';
+import './styles/print.css';
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { mountApp } from './app';

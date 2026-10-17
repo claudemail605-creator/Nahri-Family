@@ -37,6 +37,11 @@ export interface OpenModalOptions {
   closeLabel?: string;
   /** Extra class on the dialog element (width/style variants). */
   dialogClass?: string;
+  /**
+   * Extra element(s) for the head, next to the close button — the tools'
+   * print/PNG buttons sit there like the reference's modal-head-actions.
+   */
+  headActions?: Node;
   onClose?: () => void;
 }
 
@@ -150,6 +155,9 @@ export function openModal(options: OpenModalOptions, doc: Document = document): 
         h('h2', { class: 'modal__title', id: titleId, text: options.title }),
         options.subtitle ? h('p', { class: 'modal__sub', text: options.subtitle }) : null,
       ),
+      options.headActions
+        ? h('div', { class: 'modal__head-actions' }, options.headActions)
+        : null,
       dismissibleAtOpen ? closeButton : null,
     ),
     body,

@@ -1,0 +1,61 @@
+/**
+ * Print (extras L4) — the tree exactly as rendered, under the print head the
+ * tools' "Print this view" fills in. Ported from the reference's
+ * `@media print` block, re-targeted to this app's DOM (app-shell →
+ * tree-workspace → tw-main → tree-stage → tree-world).
+ */
+
+.print-head {
+  display: none;
+  padding: 12px 4px 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-900);
+}
+
+@media print {
+  .app-header,
+  #toast-host,
+  .tw-toolbar,
+  .tw-sidebar,
+  #details,
+  #load-error,
+  #empty-note,
+  #table-host,
+  #branch-host,
+  #tree-tooltip,
+  .modal-backdrop {
+    display: none !important;
+  }
+
+  body {
+    overflow: visible;
+    background: #fff;
+  }
+
+  .app-shell,
+  .app-main,
+  .view-host,
+  .tree-workspace,
+  .tw-body,
+  .tw-main {
+    display: block;
+    height: auto;
+    overflow: visible;
+  }
+
+  #tree-stage {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  /* The pan/zoom transform is what positions the tree: print cancels it so
+   * the fully laid-out world box flows across the pages. */
+  #tree-world {
+    transform: none !important;
+    position: relative !important;
+    top: auto;
+    left: auto;
+  }
+}

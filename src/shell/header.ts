@@ -11,6 +11,8 @@ export interface HeaderRefs {
   adminButton: HTMLButtonElement;
   /** Admins only (H7) — exports the tree as Excel; wired by the app shell. */
   exportButton: HTMLButtonElement;
+  /** The tools modal (extras L1–L4) — every signed-in user; wired by the shell. */
+  toolsButton: HTMLButtonElement;
   /** Filled by the shell when a profile is signed in (avatar chip). */
   accountArea: HTMLElement;
 }
@@ -91,6 +93,24 @@ export function buildHeader(): HeaderRefs {
     ),
   );
 
+  /* The tools modal (extras): visible for every signed-in user with a loaded
+     tree, like the reference's top-bar tools button (the empty-tree guard
+     lives in the tools open()). */
+  const toolsButton = h(
+    'button',
+    {
+      type: 'button',
+      id: 'btn-tools',
+      class: 'icon-button',
+      'data-i18n': 'extra.tools',
+      'data-i18n-attr': 'aria-label',
+      hidden: true,
+    },
+    svgIcon(
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3.5" y="9" width="17" height="10.5" rx="2"/><path d="M9 9V7.4A2.4 2.4 0 0 1 11.4 5h1.2A2.4 2.4 0 0 1 15 7.4V9M3.5 13.4h17"/></svg>`,
+    ),
+  );
+
   const element = h(
     'header',
     { class: 'app-header' },
@@ -107,9 +127,10 @@ export function buildHeader(): HeaderRefs {
       themeButton,
       adminButton,
       exportButton,
+      toolsButton,
       accountArea,
     ),
   );
 
-  return { element, langSelect, themeButton, adminButton, exportButton, accountArea };
+  return { element, langSelect, themeButton, adminButton, exportButton, toolsButton, accountArea };
 }
