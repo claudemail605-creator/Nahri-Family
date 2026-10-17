@@ -389,6 +389,63 @@ extraction is faithful to it, and it is left unchanged for now.
 - The admin queue for deletion requests (F2) and the recently-deleted list (F6)
   arrive in Phase 5.
 
+## Phase 5 - Admin panel, import/backup and tools
+
+Build in five committed chunks (A `924487e`, B `f755414`, C `70b5994`,
+D `007d426`, E chunk commit). The mock Supabase server grew with the work
+(user administration, `admin-users` function emulation, import/backup
+endpoints, write journals) so every write is asserted against recorded
+INSERT/PATCH bodies.
+
+### What is verified where (Phase 5)
+
+- **Unit (Vitest), 270 tests / 23 files** - pure logic only:
+  - table pager math (9): clamped slicing, range text, edge pages;
+  - Excel/backup/JSON modules incl. the importer's validation (21):
+    problems list wording, parents-first ordering, duplicate legacy-id
+    de-duplication, backup/restore payload shapes, isoDate edge cases;
+  - tools pure modules (12): the kinship walker term by term
+    (dada/dadi vs nana/nani split through the branch chain, chacha/phupho,
+    cousins, honest approximates for what the tree cannot name), the
+    upcoming-30-days rules (full dates only, deceased birthdays skip,
+    remembrance years, window edges) and the statistics definitions
+    (visible-only counts, ages, places, most children).
+- **E2E (Playwright, both projects), 71 tests → 141 passed + 1 skipped
+  (by design)** against the mock Supabase:
+  - tree spec (16): includes the pagination views (footer interactions,
+    per-page select, page reset on data change);
+  - admin spec (14): only admins get the buttons; every tab loads its data
+    or states its failure honestly; invite review + validation; role
+    deactivate/activate + resend + temporary password through the emulated
+    `admin-users` function (with the not-deployed classification); deletion
+    queue approve/reject with real writes; restore; activity feed with
+    filters; Excel export; JSON backup download (every table asserted);
+    the .xlsx import from preview through danger-confirm to parents-first
+    inserts, update pass and reload;
+  - tools spec (6): opens for any signed-in user (not admin-gated); kinship
+    picks (grandson, Phupho) with the chain read out; the upcoming list
+    under a pinned clock (`page.clock.setFixedTime`) plus goto-person
+    selection; the statistics bars recounted against the fixture (2/5/2/2/2
+    per generation, 6/6/1 gender, ages 126/17 at the pinned date, places,
+    most children); print fills `#print-head` and calls `window.print`
+    (stubbed init script, modal closes first as the reference does); the
+    PNG downloads a dated `Nahri_Family_Tree_<date>.png` and closes the
+    modal only on success.
+
+### Not yet tested (Phase 5)
+
+- No live write against the real Supabase project — the owner's test
+  account and a separate explicit OK are still pending (import, invites and
+  every admin write remain mock-verified only).
+- The vendored `supabase/functions/admin-users` copy is not deployed:
+  deployment is an owner action and the UI classifies the not-deployed case
+  honestly (lists the refusal); a deployed run against the real project is
+  untested by design.
+- No physical-device run: print dialogs are OS UI; the PNG action is only
+  verified headlessly.
+- Urdu/Hindi renditions of the Phase 5 wording inherit the project-wide
+  native-speaker review pass (planned in Phase 6/7).
+
 ## Manual checks that were performed
 
 - The security scan of the reference (`scan_security.cjs`, Phase 0) covered the
