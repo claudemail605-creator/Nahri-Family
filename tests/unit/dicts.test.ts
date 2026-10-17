@@ -7,8 +7,8 @@ const DICTS = { en, ur, hi } as const;
 const enKeys = Object.keys(en).sort();
 
 describe('shipped dictionaries', () => {
-  it('English is the parity baseline (619 keys)', () => {
-    expect(enKeys).toHaveLength(619);
+  it('English is the parity baseline (623 keys)', () => {
+    expect(enKeys).toHaveLength(623);
   });
 
   it.each(['ur', 'hi'] as const)('%s defines exactly the English key set', (lang) => {

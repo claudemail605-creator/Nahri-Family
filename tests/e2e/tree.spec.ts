@@ -220,6 +220,54 @@ test('table view shows all 23 columns, sorts, and selects', async ({ page }) => 
   await expect(page.locator('#tree-stage')).toBeVisible();
 });
 
+test('table view paginates rows (G6)', async ({ page }) => {
+  await signInAs(page, 'admin@example.test');
+  await waitForTree(page);
+  await page.locator('#view-table').click();
+
+  const table = page.locator('#table-host .tree-table');
+  const pager = page.locator('#table-host .table-pager');
+  // The 13 fixtures fit the default page (50) — the footer still reports it.
+  await expect(table.locator('tbody tr')).toHaveCount(13);
+  await expect(pager.locator('.tp-range')).toHaveText(
+    t('table.pagerInfo', { from: 1, to: 13, total: 13 }),
+  );
+  await expect(pager.locator('button[data-dir="-1"]')).toBeDisabled();
+  await expect(pager.locator('button[data-dir="1"]')).toBeDisabled();
+
+  // Shrink to 10 rows per page — the 13 fixtures spread over two pages.
+  await pager.locator('.tp-per').selectOption('10');
+  await expect(table.locator('tbody tr')).toHaveCount(10);
+  await expect(pager.locator('.tp-range')).toHaveText(
+    t('table.pagerInfo', { from: 1, to: 10, total: 13 }),
+  );
+  await expect(pager.locator('button[data-dir="-1"]')).toBeDisabled();
+  await expect(pager.locator('button[data-dir="1"]')).toBeEnabled();
+
+  // Page 2 holds the remaining three rows, arrows flipped.
+  await pager.locator('button[data-dir="1"]').click();
+  await expect(table.locator('tbody tr')).toHaveCount(3);
+  await expect(pager.locator('.tp-range')).toHaveText(
+    t('table.pagerInfo', { from: 11, to: 13, total: 13 }),
+  );
+  await expect(pager.locator('button[data-dir="1"]')).toBeDisabled();
+  await expect(pager.locator('button[data-dir="-1"]')).toBeEnabled();
+
+  // Selection still works from page 2: the sheet opens, the row marks .sel.
+  await table.locator('tbody tr').first().click();
+  await expect(page.locator('#details .p-name')).toBeVisible();
+  await expect(table.locator('tbody tr.sel')).toHaveCount(1);
+
+  // On phones the sheet covers the pager — close it (mirrors edit.spec).
+  await page.locator('#panel-close').click();
+  await expect(page.locator('#details')).toBeHidden();
+
+  // Back to page 1: ten rows again, no stale selection marker.
+  await pager.locator('button[data-dir="-1"]').click();
+  await expect(table.locator('tbody tr')).toHaveCount(10);
+  await expect(table.locator('tbody tr.sel')).toHaveCount(0);
+});
+
 test('zoom buttons change the scale', async ({ page }) => {
   await signInAs(page, 'admin@example.test');
   await waitForTree(page);

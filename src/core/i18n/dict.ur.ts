@@ -1,6 +1,6 @@
 /**
  * GENERATED FILE — do not edit by hand.
- * Extracted from the reference application's js/i18n.js (619 messages per language).
+ * Extracted from the reference application's js/i18n.js (623 messages per language).
  * Regenerate with: npm run extract:i18n
  */
 export const ur = {
@@ -622,5 +622,9 @@ export const ur = {
   "admin.statusNotSignedIn": "دعوت ابھی استعمال نہیں ہوئی",
   "admin.statusActive": "فعال",
   "generic.close": "بند کریں",
-  "profile.edit": "پروفائل میں ترمیم کریں"
+  "profile.edit": "پروفائل میں ترمیم کریں",
+  "table.pagerInfo": "{from}–{to}، کل {total} میں سے",
+  "table.prevPage": "پچھلا صفحہ",
+  "table.nextPage": "اگلا صفحہ",
+  "table.perPage": "فی صفحہ قطاریں"
 } as const;

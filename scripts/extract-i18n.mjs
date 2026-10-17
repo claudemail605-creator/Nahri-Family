@@ -25,7 +25,7 @@ const SOURCE = process.argv[2]
   : resolve(HERE, '..', '..', 'reference', 'js', 'i18n.js');
 const OUT_DIR = resolve(HERE, '..', 'src', 'core', 'i18n');
 const LANGS = ['en', 'ur', 'hi'];
-const EXPECTED_KEY_COUNT = 619;
+const EXPECTED_KEY_COUNT = 623;
 
 function extractObjectLiteral(text, declaration) {
   const declAt = text.indexOf(declaration);
@@ -118,6 +118,29 @@ const NEW_KEYS = {
     en: 'Edit profile',
     ur: 'پروفائل میں ترمیم کریں',
     hi: 'प्रोफ़ाइल संपादित करें',
+  },
+  // Table pagination (Phase 5, G6) — new controls with no reference wording.
+  // The Urdu/Hindi lines follow the existing table idiom and await the
+  // native-speaker review (docs/PLAN.md).
+  'table.pagerInfo': {
+    en: '{from}–{to} of {total}',
+    ur: '{from}–{to}، کل {total} میں سے',
+    hi: '{from}–{to}, कुल {total} में से',
+  },
+  'table.prevPage': {
+    en: 'Previous page',
+    ur: 'پچھلا صفحہ',
+    hi: 'पिछला पृष्ठ',
+  },
+  'table.nextPage': {
+    en: 'Next page',
+    ur: 'اگلا صفحہ',
+    hi: 'अगला पृष्ठ',
+  },
+  'table.perPage': {
+    en: 'Rows per page',
+    ur: 'فی صفحہ قطاریں',
+    hi: 'प्रति पृष्ठ पंक्तियाँ',
   },
 };
 if (literal.includes('`')) {

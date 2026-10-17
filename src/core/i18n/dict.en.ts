@@ -1,6 +1,6 @@
 /**
  * GENERATED FILE — do not edit by hand.
- * Extracted from the reference application's js/i18n.js (619 messages per language).
+ * Extracted from the reference application's js/i18n.js (623 messages per language).
  * Regenerate with: npm run extract:i18n
  */
 export const en = {
@@ -622,5 +622,9 @@ export const en = {
   "admin.statusNotSignedIn": "invitation not used yet",
   "admin.statusActive": "active",
   "generic.close": "Close",
-  "profile.edit": "Edit profile"
+  "profile.edit": "Edit profile",
+  "table.pagerInfo": "{from}–{to} of {total}",
+  "table.prevPage": "Previous page",
+  "table.nextPage": "Next page",
+  "table.perPage": "Rows per page"
 } as const;

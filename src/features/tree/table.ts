@@ -73,6 +73,44 @@ export interface TableSort {
   dir: 1 | -1;
 }
 
+/* ----------------------------- pagination (G6) --------------------------- */
+
+export const PER_PAGE_OPTIONS = [10, 25, 50, 100] as const;
+export const DEFAULT_PER_PAGE = 50;
+
+export interface PageSlice<T> {
+  rows: T[];
+  page: number;
+  pageCount: number;
+  /** 1-based index of the first row on this page (0 for an empty set). */
+  from: number;
+  /** 1-based index of the last row (0 for an empty set). */
+  to: number;
+  total: number;
+}
+
+/**
+ * Slice a sorted row list into one page. The requested page is clamped into
+ * range — a shrinking result (filters, retried loads) can never strand the
+ * user on an empty page.
+ */
+export function paginate<T>(rows: readonly T[], page: number, perPage: number): PageSlice<T> {
+  const total = rows.length;
+  const size = Math.max(1, Math.floor(perPage) || 1);
+  const pageCount = Math.max(1, Math.ceil(total / size));
+  const clamped = Math.min(Math.max(1, Math.floor(page) || 1), pageCount);
+  const start = (clamped - 1) * size;
+  const slice = rows.slice(start, start + size);
+  return {
+    rows: slice,
+    page: clamped,
+    pageCount,
+    from: total ? start + 1 : 0,
+    to: start + slice.length,
+    total,
+  };
+}
+
 function sortValue(p: Person, key: TableColumnKey): string | number | null {
   switch (key) {
     case 'name':
@@ -110,6 +148,15 @@ export function sortPeople(people: Person[], sort: TableSort | null): Person[] {
   return rows;
 }
 
+export interface TablePagerState {
+  page: number;
+  pageCount: number;
+  from: number;
+  to: number;
+  total: number;
+  perPage: number;
+}
+
 export interface TableDeps {
   i18n: I18n;
   lang: Lang;
@@ -119,6 +166,10 @@ export interface TableDeps {
   sort: TableSort | null;
   onSort(key: TableColumnKey): void;
   onSelect(personId: string): void;
+  /** Pagination of the rows handed to renderTable (G6). */
+  pager: TablePagerState;
+  onPage(page: number): void;
+  onPerPage(perPage: number): void;
 }
 
 export function renderTable(host: HTMLElement, people: Person[], deps: TableDeps): void {
@@ -188,5 +239,68 @@ export function renderTable(host: HTMLElement, people: Person[], deps: TableDeps
     }
   });
 
-  host.replaceChildren(h('table', { class: 'tree-table' }, thead, tbody));
+  /* Pagination footer (G6); hidden for an empty table — the empty state
+     carries that message. The range doubles as the page indicator. */
+  function buildPager(): HTMLElement {
+    const pager = h(
+      'div',
+      { class: 'table-pager' },
+      h(
+        'span',
+        { class: 'tp-range' },
+        i18n.fmt('table.pagerInfo', {
+          from: deps.pager.from,
+          to: deps.pager.to,
+          total: deps.pager.total,
+        }),
+      ),
+      h(
+        'select',
+        { class: 'input tp-per', 'aria-label': i18n.t('table.perPage') },
+        ...PER_PAGE_OPTIONS.map((size) =>
+          h('option', { value: String(size), selected: size === deps.pager.perPage }, String(size)),
+        ),
+      ),
+    h(
+      'button',
+      {
+        type: 'button',
+        class: 'tp-btn',
+        dataset: { dir: '-1' },
+        'aria-label': i18n.t('table.prevPage'),
+        disabled: deps.pager.page <= 1,
+      },
+      '‹',
+    ),
+    h(
+      'button',
+      {
+        type: 'button',
+        class: 'tp-btn',
+        dataset: { dir: '1' },
+        'aria-label': i18n.t('table.nextPage'),
+        disabled: deps.pager.page >= deps.pager.pageCount,
+      },
+      '›',
+    ),
+    );
+    return pager;
+  }
+  const pager = deps.pager.total > 0 ? buildPager() : null;
+  if (pager) {
+    pager.addEventListener('click', (event) => {
+      const btn = (event.target as Element | null)?.closest<HTMLButtonElement>('button[data-dir]');
+      if (!btn || btn.disabled) return;
+      deps.onPage(deps.pager.page + Number(btn.dataset.dir));
+    });
+    pager.querySelector<HTMLSelectElement>('.tp-per')?.addEventListener('change', (event) => {
+      const perPage = Number((event.target as HTMLSelectElement).value);
+      if (Number.isFinite(perPage) && perPage > 0) deps.onPerPage(perPage);
+    });
+  }
+
+  host.replaceChildren(
+    h('div', { class: 'table-scroll' }, h('table', { class: 'tree-table' }, thead, tbody)),
+    ...(pager ? [pager] : []),
+  );
 }

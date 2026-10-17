@@ -619,7 +619,21 @@
 
 /* ---- Table --------------------------------------------------------------- */
 
+/* Pagination frame (G6): the scroll area and its footer split the host.
+   `display: flex` here means the [hidden] attribute must be re-asserted. */
 .tw-table {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tw-table[hidden] {
+  display: none;
+}
+
+.table-scroll {
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -694,6 +708,59 @@
 .tree-table td.dash {
   color: var(--text-faint);
   text-align: center;
+}
+
+/* Pagination footer (G6). Sticky tones keep it legible above the rows. */
+.table-pager {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.tp-range {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tp-per {
+  flex: none;
+  min-height: 0;
+  width: auto;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.tp-btn {
+  flex: none;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tp-btn:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+
+.tp-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* ---- Details sheet ------------------------------------------------------- */

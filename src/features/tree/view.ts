@@ -24,7 +24,14 @@ import { PanZoomController } from './panzoom';
 import { renderDetails } from './panel';
 import { photoKey, signedPhotoUrls } from './photo';
 import { genderLabelKey, renderTreeInto } from './render';
-import { renderTable, sortPeople, type TableColumnKey, type TableSort } from './table';
+import {
+  DEFAULT_PER_PAGE,
+  paginate,
+  renderTable,
+  sortPeople,
+  type TableColumnKey,
+  type TableSort,
+} from './table';
 
 /**
  * The tree workspace: everything between the shell header and the details
@@ -88,6 +95,9 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
       : 'tree';
   let showDeleted = false;
   let sort: TableSort | null = null;
+  /** Table pagination (G6) — resets to page 1 whenever the workspace re-renders. */
+  let tablePage = 1;
+  let tablePerPage = DEFAULT_PER_PAGE;
   let layout: LayoutResult | null = null;
   let fitted = false;
   let loading = true; // start hidden-until-loaded so the empty note never flashes at boot
@@ -448,6 +458,9 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
 
   function refresh(refit: boolean): void {
     hideTooltip();
+    // Any re-render is a new table context — pagination starts back at page 1
+    // (G6). Selection-driven jumps flow through select(), never refresh().
+    tablePage = 1;
     // The canvas stays LTR; the chrome flips with Urdu.
     element.dir = i18n.currentLang() === 'ur' ? 'rtl' : 'ltr';
     element.dataset.view = view;
@@ -548,11 +561,18 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     );
   }
 
-  function renderTableView(): void {
+  /** The sorted rows behind the table (shared by paging and jump-to-page). */
+  function tableRows(): Person[] {
     const source = vis.visible
       ? model.people.filter((p) => vis.matchSet.has(p.id))
       : model.people;
-    renderTable(tableHost, sortPeople(source, sort), {
+    return sortPeople(source, sort);
+  }
+
+  function renderTableView(): void {
+    const slice = paginate(tableRows(), tablePage, tablePerPage);
+    tablePage = slice.page;
+    renderTable(tableHost, slice.rows, {
       i18n,
       lang: i18n.currentLang(),
       selectedId,
@@ -560,9 +580,28 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
       sort,
       onSort: (key: TableColumnKey) => {
         sort = { key, dir: sort && sort.key === key ? (sort.dir === 1 ? -1 : 1) : 1 };
+        tablePage = 1;
         renderTableView();
       },
       onSelect: (id: string) => select(id),
+      pager: {
+        page: slice.page,
+        pageCount: slice.pageCount,
+        from: slice.from,
+        to: slice.to,
+        total: slice.total,
+        perPage: tablePerPage,
+      },
+      onPage: (page: number) => {
+        tablePage = page;
+        renderTableView();
+        tableHost.scrollTop = 0;
+      },
+      onPerPage: (perPage: number) => {
+        tablePerPage = perPage;
+        tablePage = 1;
+        renderTableView();
+      },
     });
   }
 
@@ -676,7 +715,19 @@ export function buildTreeWorkspace(deps: TreeWorkspaceDeps): TreeWorkspace {
     hideTooltip();
     syncSelection();
     for (const row of tableHost.querySelectorAll('tr.sel')) row.classList.remove('sel');
-    const tr = tableHost.querySelector<HTMLElement>(`tr[data-id="${cssEscape(id)}"]`);
+    let tr = tableHost.querySelector<HTMLElement>(`tr[data-id="${cssEscape(id)}"]`);
+    if (!tr && view === 'table' && model.byId.has(id)) {
+      // G6: the row may live on another page — jump there and re-mark it.
+      const index = tableRows().findIndex((p) => p.id === id);
+      if (index >= 0) {
+        const page = Math.floor(index / tablePerPage) + 1;
+        if (page !== tablePage) {
+          tablePage = page;
+          renderTableView();
+        }
+        tr = tableHost.querySelector<HTMLElement>(`tr[data-id="${cssEscape(id)}"]`);
+      }
+    }
     tr?.classList.add('sel');
     const person = model.byId.get(id);
     if (person) {
