@@ -110,6 +110,8 @@
   }
 
   // Defaults for a new child: the parent's own name and their spouse fill in the
+
+  // Defaults for a new spouse: the owner (person being edited) fills in spouse_name,\n  // and the spouse field stays editable.\n  function valuesForNewSpouse(owner) {\n    const v = valuesFromPerson(null);\n    v.spouse_name = owner.name || "";\n    return v;\n  }
   // father/mother boxes, and stay editable.
   function valuesForNewChild(parent) {
     const v = valuesFromPerson(null);
@@ -135,11 +137,13 @@
   const DIALOG_TITLE = {
     edit: 'panel.editTitle',
     addchild: 'panel.addChildTitle',
+    addspouse: 'panel.addSpouseTitle',
     addroot: 'panel.addRootTitle'
   };
   const DIALOG_SUB = {
     edit: 'panel.editSub',
     addchild: 'panel.addChildSub',
+    addspouse: 'panel.addSpouseSub',
     addroot: 'panel.addRootSub'
   };
 
@@ -155,9 +159,12 @@
     state = {
       mode: mode,
       person: person,
+      spouseOwner: mode === 'addspouse' ? (person || null) : null,
       parent: parent,
       values: values,
       original: mode === 'edit' ? Object.assign({}, values) : {},
+      // Baseline for the unsaved-changes guard: what the dialog opened with.
+      _start: Object.assign({}, values),
       file: null,
       prepared: null,
       // Set when the person already has a photo and the user asks for it to go away.
@@ -171,6 +178,28 @@
     };
     state.parentLabel = labelForPersonId(state.parentId);
     render();
+  }
+
+  // TRUE when the dialog holds anything the user could lose. In edit mode the
+  // original values are the baseline; in create modes the values prefilled by the
+  // opener are. A picked photo or a pending photo-removal also counts.
+  function isDirty() {
+    if (!state) return false;
+    if (state.file || state.prepared || state.removePhoto) return true;
+    const baseline = state.mode === 'edit' && state.original ? state.original : (state._start || {});
+    return ALL_FIELDS.some(f =>
+      String(state.values[f.col] == null ? '' : state.values[f.col]) !==
+      String(baseline[f.col] == null ? '' : baseline[f.col]));
+  }
+
+  // Every close path (the X button, Cancel, Esc, a backdrop tap) funnels into this:
+  // an untouched dialog closes quietly, a dirty one asks before discarding, and
+  // Cancel keeps it open exactly as the user left it. A save in flight is never
+  function requestClose() {
+    if (!state) { close(); return; }
+    if (state.saving) return;                  // never interrupt an in-flight save
+    if (!isDirty()) { close(); return; }       // nothing to lose: close quietly
+    if (window.confirm(T('edit.unsavedConfirm'))) close();
   }
 
   function close() {
@@ -191,7 +220,7 @@
     e.preventDefault();
     e.stopPropagation();
     if (state && state.saving) return;
-    close();
+    requestClose();
   }
 
   /* ------------------------------ rendering ------------------------------ */
@@ -238,6 +267,17 @@
 
   function parentBlockHtml() {
     const admin = FT().isAdmin && FT().isAdmin();
+    if (state.mode === 'addspouse') {
+      // The spouse record is a top-level person; the partnership is expressed through
+      // spouse_name (filled on save). Show WHO they are being married to, fixed.
+      const owner = state.spouseOwner;
+      const label = owner ? (FT().dispName ? FT().dispName(owner) : owner.name) : '';
+      return '<div class="edit-field" data-field="parent">' +
+        '<label class="edit-label">' + esc(T('edit.marriedTo')) + '</label>' +
+        '<input class="edit-input" type="text" value="' + esc(label) + '" readonly>' +
+        '<div class="edit-hint">' + esc(T('edit.marriedToHint', { name: label })) + '</div>' +
+        '</div>';
+    }
     if (state.mode === 'addchild') {
       return '<div class="edit-field" data-field="parent">' +
         '<label class="edit-label">' + esc(T('edit.parentField')) + '</label>' +
@@ -293,9 +333,11 @@
     if (overlay) { overlay.remove(); overlay = null; }
     const mode = state.mode;
     const titleKey = DIALOG_TITLE[mode];
-    const title = mode === 'edit'
-      ? T(titleKey, { name: FT().dispName ? FT().dispName(state.person) : state.person.name })
-      : T(titleKey, { name: state.parent ? (FT().dispName ? FT().dispName(state.parent) : state.parent.name) : '' });
+    const ownerLabel = name => (FT().dispName ? FT().dispName(name) : name.name);
+    const focusName = mode === 'addspouse' ? (state.spouseOwner ? ownerLabel(state.spouseOwner) : '')
+      : mode === 'edit' ? (state.person ? ownerLabel(state.person) : '')
+        : (state.parent ? ownerLabel(state.parent) : '');
+    const title = T(titleKey, { name: focusName });
     const sub = mode === 'edit'
       ? T(DIALOG_SUB[mode], { gen: state.person.gen, gender: FT().genderLabel ? FT().genderLabel(state.person.gender) : '' })
       : T(DIALOG_SUB[mode]);
@@ -320,16 +362,16 @@
       '<div class="modal-foot">' +
       '<button type="button" class="btn" id="pf_cancel">' + esc(T('panel.cancel')) + '</button>' +
       '<button type="submit" form="pf_form" class="btn primary" id="pf_save">' +
-      esc(mode === 'edit' ? T('panel.save') : (mode === 'addroot' ? T('panel.addRoot') : T('panel.addGo'))) +
+      esc(mode === 'edit' ? T('panel.save') : (mode === 'addroot' ? T('panel.addRoot') : (mode === 'addspouse' ? T('panel.addSpouseGo') : T('panel.addGo')))) +
       '</button>' +
       '</div>' +
       '</div>';
     document.body.appendChild(overlay);
     document.documentElement.classList.add('modal-open');
 
-    overlay.querySelector('#pf_close').onclick = close;
-    overlay.querySelector('#pf_cancel').onclick = close;
-    overlay.addEventListener('mousedown', e => { if (e.target === overlay && !state.saving) close(); });
+    overlay.querySelector('#pf_close').onclick = requestClose;
+    overlay.querySelector('#pf_cancel').onclick = requestClose;
+    overlay.addEventListener('mousedown', e => { if (e.target === overlay && !state.saving) requestClose(); });
     window.addEventListener('keydown', onKeydown, true);
     const form = overlay.querySelector('#pf_form');
     form.addEventListener('submit', e => { e.preventDefault(); save(); });
@@ -505,7 +547,9 @@
   function duplicateOf(payload) {
     const name = String(payload.full_name || '').trim().toLowerCase();
     if (!name) return null;
-    const parentId = state.mode === 'addchild' ? state.parentId : state.parentId;
+    // addspouse creates a top-level person (no parent), so compare by name alone —
+    // spouses married in from other families rarely share a parent.
+    const parentId = state.mode === 'addspouse' ? null : (state.mode === 'addchild' ? state.parentId : state.parentId);
     return (FT().people ? FT().people() : []).find(p =>
       p.id !== (state.person && state.person.id) &&
       String(p.name || '').trim().toLowerCase() === name &&
@@ -559,12 +603,33 @@
         }
         person = FT().personById(state.person.id);
       } else {
-        // INSERT: parent_id only, plus the whitelisted columns. Nothing else.
+        // INSERT: parent_id (only addchild has one) + whitelisted columns.
         const insert = Object.assign({}, payload);
         insert.parent_id = state.parentId || null;
+        // Addspouse: the new row itself points back at the partner, so both sides
+        // of the marriage carry each other as spouse_name from day one.
+        if (state.mode === 'addspouse' && state.spouseOwner) {
+          insert.spouse_name = (FT().dispName ? FT().dispName(state.spouseOwner) : state.spouseOwner.name) || state.spouseOwner.name;
+        }
         const { data, error } = await client.from('people').insert(insert).select('*').single();
         if (error) throw error;
         person = { id: data.id, name: data.full_name, photo_path: data.photo_path || null };
+        // Addspouse: link BOTH sides. The new row gets the owner as spouse_name; the
+        // owner's spouse_name is only patched when it pointed at the new spouse's name
+        // exactly (that is the flow that created this request — a virtual spouse panel
+        // or branch tile), never silently over a DIFFERENT existing spouse.
+        if (state.mode === 'addspouse' && state.spouseOwner) {
+          // Patch the OWNER's side too — only when it does not already name somebody
+          // else (never overwrite an existing different partner silently).
+          const owner = state.spouseOwner;
+          const newSpouseName = insert.spouse_name || payload.full_name;
+          if (!owner.spouse || owner.spouse.trim() === '' || owner.spouse === newSpouseName) {
+            const { error: linkErr } = await client.from('people')
+              .update({ spouse_name: owner.spouse === newSpouseName ? owner.spouse : newSpouseName })
+              .eq('id', owner.id);
+            if (linkErr) console.warn('Could not link the spouse back to the owner:', linkErr.message);
+          }
+        }
       }
 
       // A photo the user asked to remove goes first: the row stops pointing at it, and

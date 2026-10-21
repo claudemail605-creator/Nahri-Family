@@ -18,6 +18,10 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const port = Number(process.argv[2] || process.env.PORT || 5173);
+// host — 2nd argument (or HOST env). Defaults to 127.0.0.1 (localhost only);
+// pass 0.0.0.0 to also serve the home network, e.g. for previewing on a phone:
+//   node tools/serve.cjs 5173 0.0.0.0
+const host = String(process.argv[3] || process.env.HOST || '127.0.0.1');
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -56,7 +60,8 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(port, '127.0.0.1', () => {
-  console.log('Family Tree served at http://localhost:' + port + '/');
+server.listen(port, () => {
+  const shown = host === '0.0.0.0' ? 'localhost (and your LAN IP)' : host;
+  console.log('Family Tree served at http://' + shown + ':' + port + '/');
   console.log('(Ctrl+C to stop)');
 });

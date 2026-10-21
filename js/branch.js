@@ -336,8 +336,11 @@
         if (!window.PersonForm) { FT().toast(T('save.notConnected')); return; }
         const p = FT().personById(btn.dataset.id);
         if (!p) return;
-        if (btn.dataset.act === 'edit' || btn.dataset.act === 'addspouse') {
+        if (btn.dataset.act === 'edit') {
           PersonForm.open({ mode: 'edit', person: p });
+        } else if (btn.dataset.act === 'addspouse') {
+          // Dedicated add-spouse dialog: names the owner, inserts one row linked both ways.
+          PersonForm.open({ mode: 'addspouse', person: p });
         } else if (btn.dataset.act === 'addchild') {
           PersonForm.open({ mode: 'addchild', parent: p });
         }
@@ -407,11 +410,13 @@
     const mBranchBtn = $('#btnBranchMobile');
     if (mBranchBtn) mBranchBtn.onclick = () => {
       if (!isEditor()) return;
-      // Close the drawer, then open the workspace.
-      const sb = $('#sidebar');
-      if (sb) sb.classList.remove('open');
-      const backdrop = $('#drawerBackdrop');
-      if (backdrop) backdrop.hidden = true;
+      // Close the filter drawer so the branch workspace can be shown.
+      window.drawer?.close?.() || (() => {
+        const sb = $('#sidebar');
+        if (sb) sb.classList.remove('open');
+        const backdrop = $('#drawerBackdrop');
+        if (backdrop) backdrop.hidden = true;
+      })();
       show();
     };
 
