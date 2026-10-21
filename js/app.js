@@ -1904,6 +1904,15 @@
     ageText: ageText,
     fmtWhen: fmtWhen,
     initials: initials,
+    // Field-completeness used by the admin's branch progress: only the fields
+    // that matter are counted, optional ones (photos, Urdu/Hindi names) are not.
+    completeness: p => {
+      const missing = [];
+      if (!p.gender) missing.push('gender');
+      if (!p.dob && !p.dob_text) missing.push('dob');
+      if ((S.kids.get(p.id) || []).length && !p.spouse) missing.push('spouse');
+      return { missing: missing };
+    },
     refresh: () => refresh(false),
     renderPanel: () => { if (S.selected) renderPanel(); },
     select: id => select(id, { focus: true }),

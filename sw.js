@@ -13,7 +13,7 @@
    ===================================================================== */
 'use strict';
 
-const CACHE = 'family-tree-shell-v6';
+const CACHE = 'family-tree-shell-v7';
 const SHELL = [
   './',
   'index.html',
@@ -25,6 +25,7 @@ const SHELL = [
   'js/photos.js',
   'js/personform.js',
   'js/admin.js',
+  'js/healthcheck.js',
   'js/extras.js',
   'js/app.js',
   'js/branch.js',

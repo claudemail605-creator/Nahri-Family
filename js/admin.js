@@ -39,6 +39,9 @@
     deleted: [],
     activity: [],
     activityFilter: { user: '', person: '', action: '', from: '', to: '' },
+    usersFilter: { q: '', status: '', branch: '' },
+    healthRows: null,       // live people rows fetched when the health tab opens
+    healthStamp: 0,
     importRows: null,
     importProblems: [],
     importFile: null,
@@ -86,6 +89,7 @@
 
   const TABS = [
     ['users', 'admin.tab.users'],
+    ['health', 'admin.tab.health'],
     ['branches', 'admin.tab.branches'],
     ['requests', 'admin.tab.requests'],
     ['deleted', 'admin.tab.deleted'],
@@ -125,11 +129,76 @@
 
   function loadTab(force) {
     if (state.tab === 'users') return loadUsers(force);
+    if (state.tab === 'health') return loadHealth(force);
     if (state.tab === 'branches') return loadBranchProgress();
     if (state.tab === 'requests') return loadRequests();
     if (state.tab === 'deleted') return loadDeleted();
     if (state.tab === 'activity') return loadActivity();
     if (state.tab === 'import') return renderImport();
+  }
+
+  /* ------------------------------ health ---------------------------------- */
+  // READ ONLY: the report analyses the CURRENT saved rows, fetched fresh from
+  // the database when the tab opens (and on the Reload button). It never writes.
+  async function loadHealth(force) {
+    const c = client();
+    if (!c) { say('<div class="admin-empty">' + esc(T('save.notConnected')) + '</div>'); return; }
+    state.busy = true;
+    say('<div class="admin-empty">' + esc(T('generic.loading')) + '</div>');
+    try {
+      if (!state.users.length) {
+        const { data, error } = await c.from('profiles').select('*');
+        if (error) throw error;
+        state.users = data || [];
+      }
+      if (!state.branches.size) {
+        const { data, error } = await c.from('branch_access').select('user_id, person_id');
+        if (error) throw error;
+        state.branches = new Map();
+        (data || []).forEach(r => {
+          const list = state.branches.get(r.user_id) || [];
+          list.push(r.person_id);
+          state.branches.set(r.user_id, list);
+        });
+      }
+      const fresh = force || !state.healthRows;
+      if (fresh) {
+        const { data, error } = await c.from('people').select('*').order('full_name', { ascending: true }).limit(10000);
+        if (error) throw error;
+        state.healthRows = data || [];
+        state.healthStamp = Date.now();
+      }
+      renderHealth();
+    } catch (err) {
+      say('<div class="admin-empty">' + esc(T('admin.loadFailed', { msg: (err && err.message) || String(err) })) + '</div>');
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  function renderHealth() {
+    if (!window.HealthCheck) {
+      say('<div class="admin-empty">' + esc(T('health.noModule')) + '</div>');
+      return;
+    }
+    // The report needs to re-render itself on filter changes, so it gets a wrapper
+    // that stays in the DOM; HealthCheck binds to it and only re-draws inside it.
+    say('<div id="hc_host"></div>');
+    const host = overlay.querySelector('#hc_host');
+    // who can edit which branch: for each branch anchor, the assigned editor(s)
+    const editorMap = new Map();
+    state.users.forEach(u => {
+      if (u.role !== 'editor') return;
+      (state.branches.get(u.id) || []).forEach(pid => editorMap.set(pid, u.full_name || u.email));
+    });
+    HealthCheck.render(host, state.healthRows, { editorMap: editorMap });
+    const reload = document.createElement('button');
+    reload.className = 'btn sm';
+    reload.type = 'button';
+    reload.textContent = T('admin.reload');
+    reload.style.marginLeft = '8px';
+    reload.onclick = () => loadHealth(true);
+    host.querySelector('.hc-filters').appendChild(reload);
   }
 
   /* ------------------------------ small UI ------------------------------ */
@@ -258,8 +327,43 @@
     }
   }
 
+  function userStatus(u) {
+    if (u.active === false) return 'inactive';
+    // me() being set to this account IS proof they signed in — the session is live.
+    const me = FT().me && FT().me();
+    if (me && me.id === u.id) return 'active';
+    if (state.functionMissing) return 'unknown';
+    return state.lastSignIn[u.id] ? 'active' : 'pending';
+  }
+
   function renderUsers() {
-    const rows = state.users.map(u => {
+    const f = state.usersFilter;
+    const q = String(f.q || '').trim().toLowerCase();
+    const users = state.users.filter(u => {
+      if (q) {
+        const hay = [u.full_name, u.email].join(' ').toLowerCase();
+        if (hay.indexOf(q) < 0) return false;
+      }
+      if (f.status && userStatus(u) !== f.status) return false;
+      if (f.branch && !(state.branches.get(u.id) || []).includes(f.branch)) return false;
+      return true;
+    });
+
+    // Branch filter: every anchor that appears in branch_access.
+    const anchorIds = [];
+    state.branches.forEach(ids => ids.forEach(id => { if (!anchorIds.includes(id)) anchorIds.push(id); }));
+    const branchOpts = anchorIds.map(id => {
+      const p = FT().personById ? FT().personById(id) : null;
+      return '<option value="' + esc(id) + '"' + (f.branch === id ? ' selected' : '') + '>' +
+        esc(p ? (FT().dispName ? FT().dispName(p) : p.name) : id.slice(0, 8)) + '</option>';
+    }).join('');
+    const statusOpts = ['', 'pending', 'active', 'inactive']
+      .map(sv => {
+        const lbl = sv ? T('admin.status.' + sv) : T('status.everyone');
+        return '<option value="' + sv + '"' + (f.status === sv ? ' selected' : '') + '>' + esc(lbl) + '</option>';
+      }).join('');
+
+    const rows = users.map(u => {
       const branchIds = state.branches.get(u.id) || [];
       const branchNames = branchIds.map(id => {
         const p = FT().personById ? FT().personById(id) : null;
@@ -267,10 +371,14 @@
       });
       const me = FT().me && FT().me();
       const isMe = !!(me && me.id === u.id);
+      const st = userStatus(u);
       const role = u.role === 'admin' ? T('admin.inviteRoleAdmin') : T('admin.inviteRoleEditor');
+      const chip = st === 'unknown' ? '' :
+        '<span class="admin-status-chip ' + (st === 'active' ? 'seen' : st === 'pending' ? 'pending' : '') + '">' +
+        esc(T('admin.status.' + st)) + '</span>';
       return '<div class="admin-user" data-user="' + esc(u.id) + '">' +
         '<div class="admin-user-main">' +
-        '<div class="admin-user-name">' + esc(u.full_name || u.email) +
+        '<div class="admin-user-name">' + esc(u.full_name || u.email) + ' ' + chip +
         (u.role === 'admin' ? ' <span class="tag">' + esc(T('admin.adminTag')) + '</span>' : '') +
         (!u.active ? ' <span class="tag gray">' + esc(T('admin.inactiveTag')) + '</span>' : '') +
         (isMe ? ' <span class="tag gray">' + esc(T('admin.you')) + '</span>' : '') + '</div>' +
@@ -279,40 +387,115 @@
         '<div class="admin-user-meta"><b>' + esc(T('admin.col.branches')) + ':</b> ' +
         (branchNames.length ? esc(branchNames.join(', ')) : '<i>' + esc(T('admin.noBranches')) + '</i>') + '</div>' +
         '<div class="admin-user-meta"><b>' + esc(T('admin.col.lastSeen')) + ':</b> ' +
-        // "never" would be a lie when the admin-users function is not deployed: the
-        // browser simply cannot read auth.users.last_sign_in_at without it.
         esc(state.functionMissing ? T('admin.unknown')
           : (state.lastSignIn[u.id] ? fmtWhen(state.lastSignIn[u.id]) : T('admin.never'))) + '</div>' +
         '</div>' +
         '<div class="admin-user-actions">' +
+        '<button type="button" class="btn sm" data-act="details">' + esc(T('admin.details')) + '</button>' +
         '<button type="button" class="btn sm" data-act="edit">' + esc(T('admin.editUser')) + '</button>' +
         '<button type="button" class="btn sm" data-act="resend">' + esc(T('admin.resendInvite')) + '</button>' +
         '<button type="button" class="btn sm" data-act="password">' + esc(T('admin.setTempPassword')) + '</button>' +
-        (u.active
-          ? '<button type="button" class="btn sm danger" data-act="deactivate">' + esc(T('admin.deactivate')) + '</button>'
-          : '<button type="button" class="btn sm" data-act="activate">' + esc(T('admin.activate')) + '</button>') +
+        (!u.active
+          ? '<button type="button" class="btn sm" data-act="activate">' + esc(T('admin.activate')) + '</button>'
+          : '<button type="button" class="btn sm danger" data-act="deactivate">' + esc(T('admin.deactivate')) + '</button>') +
+        (st === 'pending' && !state.functionMissing && !isMe
+          ? '<button type="button" class="btn sm ghost" data-act="cancel">' + esc(T('admin.cancelInvite')) + '</button>'
+          : '') +
         '</div></div>';
     }).join('');
 
     say(
       (state.functionMissing ? '<div class="admin-notice">' + esc(T('admin.notDeployed')) + '</div>' : '') +
-      '<div class="admin-bar"><button type="button" class="btn primary sm" id="ad_invite">' + esc(T('admin.inviteTitle')) + '</button></div>' +
-      (rows || '<div class="admin-empty">' + esc(T('admin.noUsers')) + '</div>')
+      '<div class="admin-filters">' +
+      '<input class="edit-input" id="uf_q" type="search" placeholder="' + esc(T('admin.userSearch')) + '" value="' + esc(f.q) + '" autocomplete="off">' +
+      '<select class="edit-input" id="uf_status">' + statusOpts + '</select>' +
+      '<select class="edit-input" id="uf_branch"><option value="">' + esc(T('admin.filterAllBranches')) + '</option>' + branchOpts + '</select>' +
+      '</div>' +
+      '<div class="admin-bar"><button type="button" class="btn primary sm" id="ad_invite">' + esc(T('admin.inviteTitle')) + '</button>' +
+      '<span class="admin-hint" style="margin-inline-start:auto">' + esc(T('admin.usersCount', { n: users.length, total: state.users.length })) + '</span></div>' +
+      (rows || '<div class="admin-empty">' + esc((f.q || f.status || f.branch) ? T('admin.noUsersMatch') : T('admin.noUsers')) + '</div>')
     );
+
+    const deb = (fnWork, ms) => { let tt; return (...a) => { clearTimeout(tt); tt = setTimeout(() => fnWork(...a), ms); }; };
+    overlay.querySelector('#uf_q').oninput = deb(e => { state.usersFilter.q = e.target.value; renderUsers(); }, 150);
+    overlay.querySelector('#uf_status').onchange = e => { state.usersFilter.status = e.target.value; renderUsers(); };
+    overlay.querySelector('#uf_branch').onchange = e => { state.usersFilter.branch = e.target.value; renderUsers(); };
+
     overlay.querySelector('#ad_invite').onclick = openInvite;
     overlay.querySelectorAll('[data-user]').forEach(row => {
       const u = state.users.find(x => x.id === row.dataset.user);
       row.querySelectorAll('[data-act]').forEach(b => {
         b.onclick = () => {
           const act = b.dataset.act;
+          if (act === 'details') return openUserDetails(u);
           if (act === 'edit') return openEditUser(u);
           if (act === 'resend') return resendInvite(u);
           if (act === 'password') return openSetPassword(u);
           if (act === 'deactivate') return setActive(u, false);
           if (act === 'activate') return setActive(u, true);
+          if (act === 'cancel') return cancelInvite(u);
         };
       });
     });
+  }
+
+  // Account details: everything the trusted backend already gives, in one place.
+  function openUserDetails(u) {
+    const branchIds = state.branches.get(u.id) || [];
+    const branchNames = branchIds.map(id => {
+      const p = FT().personById ? FT().personById(id) : null;
+      return (p ? (FT().dispName ? FT().dispName(p) : p.name) : id.slice(0, 8));
+    });
+    const st = userStatus(u);
+    const last = state.functionMissing ? T('admin.unknown')
+      : (state.lastSignIn[u.id] ? fmtWhen(state.lastSignIn[u.id]) : T('admin.never'));
+    const rowsInfo = [
+      [T('admin.col.name'), esc(u.full_name || u.email)],
+      [T('admin.inviteEmail'), esc(u.email)],
+      [T('admin.inviteRole'), esc(u.role === 'admin' ? T('admin.inviteRoleAdmin') : T('admin.inviteRoleEditor'))],
+      [T('admin.col.status'), esc(st === 'unknown' ? T('admin.unknown') : T('admin.status.' + st))],
+      [T('admin.col.accountStatus'), esc(u.active ? T('admin.status.active') : T('admin.inactiveTag'))],
+      [T('admin.col.lastSeen'), esc(last)],
+      [T('admin.col.created'), esc(u.created_at ? fmtWhen(u.created_at) : T('admin.unknown'))],
+      [T('admin.col.branches'), esc(branchNames.length ? branchNames.join(', ') : T('admin.noBranches'))]
+    ];
+    const bodyHtml = rowsInfo.map(([k, v]) =>
+      '<div class="p-row"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>').join('') +
+      '<p class="admin-hint">' + esc(T('admin.detailsNote')) + '</p>' +
+      '<div class="admin-bar"><button type="button" class="btn sm" id="ud_resend">' + esc(T('admin.resendOrRecovery')) + '</button></div>';
+    const wrap = dialog({
+      title: T('admin.detailsTitle', { name: u.full_name || u.email }),
+      ok: T('panel.close'),
+      body: bodyHtml,
+      onSubmit: async () => { /* the OK button simply closes the details view */ }
+    });
+    const rb = wrap.querySelector('#ud_resend');
+    if (rb) rb.onclick = () => resendInvite(u);
+  }
+
+  async function resendInvite(u) {
+    try {
+      const res = await fn('resend', { user_id: u.id });
+      FT().toast(res && res.kind === 'recovery'
+        ? T('admin.recoverySent', { email: u.email })
+        : T('admin.resendDone', { email: u.email }));
+    } catch (e) {
+      FT().toast((e && e.message) || String(e));
+    }
+  }
+
+  // Cancel a PENDING invitation: removes the not-yet-used account through the
+  // Edge Function, which refuses anything that has ever signed in — so a real
+  // account can never be deleted from here by accident.
+  async function cancelInvite(u) {
+    if (!window.confirm(T('admin.cancelInviteConfirm', { email: u.email }))) return;
+    try {
+      await fn('remove', { user_id: u.id });
+      FT().toast(T('admin.cancelInviteDone', { email: u.email }));
+      await loadUsers(true);
+    } catch (e) {
+      FT().toast((e && e.message) || String(e));
+    }
   }
 
   // Branch picker: a filter box over a scrollable list of people with checkboxes.

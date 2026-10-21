@@ -1004,3 +1004,23 @@ html[dir="rtl"] .panel { --slide-from: -24px; }
     animation: none !important;
   }
 }
+
+/* ---------- Health check (admin) ---------- */
+.hc-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.hc-filters .chip { display: inline-flex; align-items: center; gap: 6px; }
+.hc-filters .chip b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.hc-filters .hc-sevsel { max-width: 150px; margin-inline-start: auto; }
+.hc-note { font-size: 11px; color: var(--ink-3); margin: 6px 0 12px; }
+.hc-finding { border: 1px solid var(--line); border-inline-start: 3px solid var(--line-2); border-radius: var(--r-m);
+  background: var(--surface-2); padding: 10px 12px; margin-bottom: 8px; }
+.hc-finding.sev-high { border-inline-start-color: var(--danger); }
+.hc-finding.sev-medium { border-inline-start-color: var(--accent); }
+.hc-finding.sev-low { border-inline-start-color: var(--ink-3); }
+.hc-finding-title { font-weight: 600; font-size: 13px; color: var(--ink); display: flex; align-items: center; gap: 8px; }
+.hc-sev { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; padding: 2px 8px; border-radius: var(--r-l);
+  background: var(--surface-3); color: var(--ink-2); flex: none; }
+.hc-sev.high { background: var(--danger-soft); color: var(--danger); }
+.hc-sev.medium { background: var(--accent-soft); color: var(--accent); }
+.hc-finding-reason { font-size: 12px; color: var(--ink-2); margin-top: 3px; }
+.hc-finding-names { font-size: 12px; color: var(--ink); margin-top: 4px; font-weight: 500; }
+.hc-finding-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }

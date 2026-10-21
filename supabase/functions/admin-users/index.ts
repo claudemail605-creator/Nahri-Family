@@ -10,12 +10,16 @@
    checked against the database — being signed in is not enough.
 
    Actions (POST, JSON body):
-     { action: 'list' }                                   -> users + last sign-in
+     { action: 'list' }                                   -> users + last sign-in + invite hints
      { action: 'invite', email, full_name, role, branch_person_ids[], send_email }
      { action: 'update', user_id, full_name?, role?, branch_person_ids? }
      { action: 'resend', user_id }
      { action: 'set_password', user_id, password }
      { action: 'disable'|'enable', user_id, active? }
+     { action: 'remove', user_id }                        -> cancel a PENDING invitation:
+                                                             deletes an auth account that has
+                                                             NEVER signed in. Sign-in-experienced
+                                                             accounts are always refused.
 
    Secrets used (Supabase injects the two SUPABASE_* ones automatically):
      SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
@@ -120,7 +124,12 @@ async function actionList(ctx: Ctx) {
   const users = (data?.users ?? []).map((u: Record<string, unknown>) => ({
     id: u.id,
     email: u.email,
+    created_at: u.created_at ?? null,
+    // Invite-status hints. The UI derives "pending invitation" purely from these:
+    // never signed in AND (not confirmed, or confirmed but never used).
     last_sign_in_at: u.last_sign_in_at ?? null,
+    email_confirmed_at: u.email_confirmed_at ?? null,
+    confirmation_sent_at: (u as Record<string, unknown>).confirmation_sent_at ?? null,
     banned_until: u.banned_until ?? null
   }));
   return json({ ok: true, users }, 200, ctx.req);
@@ -230,6 +239,25 @@ async function actionSetPassword(ctx: Ctx, body: Record<string, unknown>) {
   return json({ ok: true }, 200, ctx.req);
 }
 
+async function actionRemove(ctx: Ctx, body: Record<string, unknown>) {
+  const sb = service();
+  const userId = String(body.user_id ?? '');
+  if (!userId) return fail('user_id is required.', 400, ctx.req);
+  // Cancelling a pending invitation removes a not-yet-used account. Anything
+  // with sign-in history is a real account and is refused — this path is only
+  // ever for invitations that were never accepted.
+  if (userId === ctx.callerId) return fail('You cannot cancel your own invitation.', 400, ctx.req);
+  const { data } = await sb.auth.admin.getUserById(userId);
+  const u = data?.user ?? null;
+  if (!u) return fail('That account was not found — it may already be cancelled.', 404, ctx.req);
+  if (u.last_sign_in_at) {
+    return fail('This account has already signed in, so it cannot be cancelled. Deactivate it instead.', 400, ctx.req);
+  }
+  const { error } = await sb.auth.admin.deleteUser(userId);
+  if (error) return fail(error.message, 400, ctx.req);
+  return json({ ok: true, removed: true }, 200, ctx.req);
+}
+
 async function actionSetActive(ctx: Ctx, body: Record<string, unknown>, active: boolean) {
   const sb = service();
   const userId = String(body.user_id ?? '');
@@ -286,6 +314,7 @@ Deno.serve(async (req: Request) => {
       case 'set_password': return await actionSetPassword(ctx, body);
       case 'disable': return await actionSetActive(ctx, body, false);
       case 'enable': return await actionSetActive(ctx, body, true);
+      case 'remove': return await actionRemove(ctx, body);
       default: return fail('Unknown action.', 400, req);
     }
   } catch (err) {
