@@ -704,6 +704,11 @@
     st.addEventListener('pointerdown', e => {
       // Record every finger first; the multi-touch decision below uses `active`.
       active.set(e.pointerId, pt(e));
+      // Capture on the CONTAINER, never on a card: the tree body is re-rendered
+      // whenever a person is selected, so a card is not a stable event target.
+      // With the container holding the capture, pointerup/cancel always come back
+      // here and the gesture state can never be orphaned.
+      try { st.setPointerCapture(e.pointerId); } catch (err) { /* already lost */ }
       // Allow dragging to start from any node (person, spouse) or empty space.
       // If we start on a node, mark it so we can distinguish tap from drag later.
       dragStartedOnNode = !!e.target.closest('.node, .tg, .spouse-link');
@@ -743,38 +748,47 @@
       S.tx = drag.tx + dx; S.ty = drag.ty + dy; applyTransform();
     });
     const end = (e) => {
+      if (e && e.pointerId != null && st.hasPointerCapture && st.hasPointerCapture(e.pointerId)) {
+        try { st.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ }
+      }
       active.delete(e && e.pointerId);
       if (active.size < 2) pinch = null;
       if (!active.size) { drag = null; st.classList.remove('dragging'); }
     };
+    // If the browser drops the capture (DOM churn, gesture interruptions), clean
+    // (pointer) session for that pointer the same way as a real release would.
+    st.addEventListener('lostpointercapture', e => { if (active.has(e.pointerId)) end(e); });
     // Drag: if movement exceeds threshold, it's a drag (don't click).
     // If movement is below threshold, treat as tap (open person details).
     st.addEventListener('pointerup', e => {
-      if (active.has(e.pointerId)) {
-        // If we started on a node and movement was minimal, this is a tap.
-        // Otherwise it's a drag.
-        if (dragStartedOnNode && !moved) {
-          // Tap on a person — open details, but only if not prevented by drag.
-          const n = e.target.closest('.node');
-          if (n && !e.target.closest('[data-act]')) {
-            e.preventDefault();
-            const id = n.dataset.id;
-            if (!id) return;
-            // A spouse card is its own identity: open the spouse's record when it
-            // exists (data-spouse-pid), otherwise a virtual profile of that spouse.
-            if (n.dataset.spouse === '1') {
-              const spid = n.dataset.spousePid || null;
-              if (spid) select(spid, { focus: true, card: 'spouse' });
-              else select(id, { virtualSpouseOf: id, focus: true, card: 'spouse' });
-              return;
-            }
-            select(id);
-          }
-        }
-        end(e);
-      } else {
-        end(e);
+      // CLEANUP FIRST, ALWAYS. The old version returned early inside the tap
+      // branches without calling end(e), so a successful spouse-card tap orphaned
+      // the whole pointer session: `active` kept the id, `drag` stayed set, the
+      // `dragging` class stayed on the container, and the next stray pointermove
+      // panned the tree as if the finger were still down.
+      const tapHit = dragStartedOnNode && !moved && active.has(e.pointerId);
+      let tapNode = null;
+      if (tapHit) {
+        const n = e.target.closest('.node');
+        if (n && !e.target.closest('[data-act]') && n.dataset.id) tapNode = n;
       }
+      end(e);
+      // Selection runs AFTER the session is fully cleared. The re-render that
+      // select()/focusPerson() trigger can never then compete with the gesture.
+      if (!tapNode) return;
+      const n = tapNode;
+      const id = n.dataset.id, spid = n.dataset.spousePid || null;
+      const openIt = () => {
+        // A spouse card is its own identity: the spouse's own record when it
+        // exists (data-spouse-pid), otherwise the virtual profile of that spouse.
+        if (n.dataset.spouse === '1') {
+          if (spid) select(spid, { focus: true, card: 'spouse' });
+          else select(id, { virtualSpouseOf: id, focus: true, card: 'spouse' });
+        } else {
+          select(id);
+        }
+      };
+      setTimeout(openIt, 0);   // defer past the click that completes this tap
     });
     st.addEventListener('pointercancel', end);
     // Double-click / double-tap zooms in at the tap point.
@@ -916,6 +930,16 @@
   }
 
   function row(k, v) { return v != null && v !== '' ? `<div class="p-row"><div class="k">${k}</div><div class="v">${esc(v)}</div></div>` : ''; }
+  // Birth/death rows also carry their Umm al-Qura Hijri equivalent (js/hijri.js)
+  // under the Gregorian value. Only confident conversions are shown: a real
+  // calendar date converts; an approximate text date ("1965 (approx)") or a
+  // date outside the official Umm al-Qura table silently gets no second line.
+  function rowHijri(k, v, iso) {
+    if (v == null || v === '') return '';
+    let h = null;
+    if (window.Hijri && iso) { try { h = window.Hijri.format(iso); } catch (e) { h = null; } }
+    return `<div class="p-row"><div class="k">${k}</div><div class="v">${esc(v)}${h ? `<div class="v-hijri">${esc(I18n.t('hijri.label'))}: ${esc(h)}</div>` : ''}</div></div>`;
+  }
   function sec(title, rows) { const r = rows.join(''); return r ? `<div class="p-sec"><h5>${title}</h5>${r}</div>` : ''; }
   function relBtns(list) { return list.map(p => `<button data-goto="${esc(p.id)}">${esc(p.nick ? p.nick + ' – ' : '')}${esc(dispName(p))}</button>`).join(''); }
 
@@ -998,7 +1022,7 @@
     const sibs = p.parent ? (S.kids.get(p.parent.id) || []).filter(x => x.id !== p.id) : [];
     const age = ageText(p);
     const personal = [
-      row(I18n.t('edit.dob'), p.dob_display || p.dob),
+      rowHijri(I18n.t('edit.dob'), p.dob_display || p.dob, p.dob_iso || p.dob),
       row(I18n.t('panel.age'), age),
       row(I18n.t('edit.pob'), p.pob),
       row(I18n.t('edit.qual'), p.qual)
@@ -1010,7 +1034,7 @@
       row(I18n.t('edit.spouseFather'), p.spouseFather)
     ];
     const passing = [
-      row(I18n.t('edit.dod'), p.dod_display || p.dod),
+      rowHijri(I18n.t('edit.dod'), p.dod_display || p.dod, p.dod_iso || p.dod),
       row(I18n.t('edit.burial'), p.burial)
     ];
     const record = [

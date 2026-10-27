@@ -127,13 +127,27 @@
   function body() { return overlay.querySelector('#ad_body'); }
   function say(html) { const b = body(); if (b) b.innerHTML = html; }
 
-  function loadTab(force) {
-    if (state.tab === 'users') return loadUsers(force);
+  async function loadTab(force) {
+    // A tab that throws must never leave the panel silently blank: the error is
+    // shown inside the real tab body, with a working Retry button.
+    try {
+      await loadTabInner(force);
+    } catch (err) {
+      say('<div class="admin-empty">' +
+        esc(T('generic.loadFailed', { msg: (err && err.message) || String(err) })) +
+        '<div style="margin-top:10px"><button type="button" class="btn sm primary" id="tab_retry">' + esc(T('generic.retry')) + '</button></div>' +
+        '</div>');
+      const rb = overlay.querySelector('#tab_retry');
+      if (rb) rb.onclick = () => loadTab(force);
+    }
+  }
+  async function loadTabInner(force) {
+    if (state.tab === 'users') return await loadUsers(force);
     if (state.tab === 'health') return loadHealth(force);
-    if (state.tab === 'branches') return loadBranchProgress();
-    if (state.tab === 'requests') return loadRequests();
-    if (state.tab === 'deleted') return loadDeleted();
-    if (state.tab === 'activity') return loadActivity();
+    if (state.tab === 'branches') return await loadBranchProgress();
+    if (state.tab === 'requests') return await loadRequests();
+    if (state.tab === 'deleted') return await loadDeleted();
+    if (state.tab === 'activity') return await loadActivity();
     if (state.tab === 'import') return renderImport();
   }
 
@@ -170,7 +184,7 @@
       }
       renderHealth();
     } catch (err) {
-      say('<div class="admin-empty">' + esc(T('admin.loadFailed', { msg: (err && err.message) || String(err) })) + '</div>');
+      say('<div class="admin-empty">' + esc(T('generic.loadFailed', { msg: (err && err.message) || String(err) })) + '</div>');
     } finally {
       state.busy = false;
     }
@@ -706,7 +720,7 @@
       if (force || !Object.keys(state.lastSignIn).length) await fetchLastSignIn();
       renderBranchProgress();
     } catch (err) {
-      say('<div class="admin-empty">' + esc(T('admin.loadFailed', { msg: (err && err.message) || String(err) })) + '</div>');
+      say('<div class="admin-empty">' + esc(T('generic.loadFailed', { msg: (err && err.message) || String(err) })) + '</div>');
     }
   }
 
@@ -770,7 +784,7 @@
       state.requests = data || [];
       renderRequests();
     } catch (err) {
-      say('<div class="admin-empty">' + esc(T('admin.loadFailed', { msg: (err && err.message) || String(err) })) + '</div>');
+      say('<div class="admin-empty">' + esc(T('generic.loadFailed', { msg: (err && err.message) || String(err) })) + '</div>');
     }
   }
 
@@ -856,7 +870,7 @@
       state.deleted = data || [];
       renderDeleted();
     } catch (err) {
-      say('<div class="admin-empty">' + esc(T('admin.loadFailed', { msg: (err && err.message) || String(err) })) + '</div>');
+      say('<div class="admin-empty">' + esc(T('generic.loadFailed', { msg: (err && err.message) || String(err) })) + '</div>');
     }
   }
 
@@ -912,7 +926,7 @@
       state.activity = data || [];
       renderActivity();
     } catch (err) {
-      say('<div class="admin-empty">' + esc(T('admin.loadFailed', { msg: (err && err.message) || String(err) })) + '</div>');
+      say('<div class="admin-empty">' + esc(T('generic.loadFailed', { msg: (err && err.message) || String(err) })) + '</div>');
     }
   }
 

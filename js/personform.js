@@ -261,6 +261,9 @@
     return '<div class="edit-field" data-field="' + f.col + '">' +
       '<label class="edit-label" for="' + id + '">' + esc(T(f.key)) + req + '</label>' +
       input + hint +
+      // Live Umm al-Qura Hijri preview under the Gregorian date inputs
+      // (js/hijri.js); filled and toggled by updateHijriHints().
+      (f.type === 'date' ? '<div class="edit-hint hijri-hint" data-hijri-for="' + id + '" hidden></div>' : '') +
       '<div class="edit-error" data-error-for="' + f.col + '" hidden></div>' +
       '</div>';
   }
@@ -380,6 +383,8 @@
     // discard everything the person typed.
     form.addEventListener('input', collect);
     form.addEventListener('change', collect);
+    form.addEventListener('input', updateHijriHints);   // the Hijri preview follows the typed date
+    updateHijriHints();   // show the Hijri preview for dates the form opened with
 
     const parentInput = overlay.querySelector('#pf_parent');
     if (parentInput) {
@@ -425,6 +430,24 @@
 
   // Read what is on screen into state.values (by column name, the vocabulary the
   // database uses).
+
+  // Live Umm al-Qura Hijri preview under the birth/death date inputs. Shown only
+  // when the entered date converts: out-of-table or empty values hide the line
+  // rather than guessing (algorithmic lunar dates can differ ±1 day from local
+  // moon sighting, and family members may cite the observed date instead).
+  function updateHijriHints() {
+    if (!overlay || !window.Hijri) return;
+    ['pf_dob', 'pf_dod'].forEach(id => {
+      const box = overlay.querySelector('[data-hijri-for="' + id + '"]');
+      const field = overlay.querySelector('#' + id);
+      if (!box || !field) return;
+      const val = (field.value || '').trim();
+      let text = null;
+      if (val) { try { text = window.Hijri.format(val); } catch (e) { text = null; } }
+      if (text) box.textContent = T('hijri.label') + ': ' + text;
+      box.hidden = !text;
+    });
+  }
   function collect() {
     if (!overlay || !state) return;
     ALL_FIELDS.forEach(f => {

@@ -1,0 +1,6 @@
+.server.log
+.server.pid
+data/
+docs/
+database/
+supabase/

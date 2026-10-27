@@ -461,6 +461,10 @@ code, .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
 .p-row:last-child { border-bottom: 0; }
 .p-row .k { color: var(--ink-3); font-size: 12px; }
 .p-row .v { word-break: break-word; color: var(--ink); font-weight: 500; }
+/* Umm al-Qura Hijri equivalent shown under a birth/death row's Gregorian value */
+.v-hijri { color: var(--ink-3); font-weight: 400; font-size: 12px; margin-top: 2px; }
+/* Live Hijri preview under the birth/death date inputs in the edit dialog */
+.hijri-hint { color: var(--ink-3); }
 .p-none { padding: 6px 22px 18px; color: var(--ink-3); font-style: italic; font-size: 13px; }
 
 .rel { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 8px; }
